@@ -1,0 +1,45 @@
+{
+  "admin_user_ids": [],
+
+  "features": {
+    "keyword_responder": true,
+    "scheduler": true,
+    "welcome_cleaner": true,
+    "ping_command": true
+  },
+
+  "welcome_channels": [],
+
+  "scheduler_channels": {
+    "friday_night": [],
+    "sunday_night": []
+  },
+
+  "relay": {
+    "prune_days": 7,
+    "groups": [
+      {
+        "name": "main",
+        "channels": [
+          {
+            "channel_id": "111111111111111111",
+            "direction": "BOTH",
+            "brand_name": "Server A",
+            "process_bot_messages": false,
+            "allow_forward_delete": true,
+            "allow_reverse_delete": false
+          },
+          {
+            "channel_id": "222222222222222222",
+            "direction": "BOTH",
+            "brand_name": "Server B",
+            "process_bot_messages": false,
+            "allow_forward_delete": true,
+            "allow_reverse_delete": false
+          }
+        ],
+        "role_mappings": []
+      }
+    ]
+  }
+}
