@@ -147,7 +147,7 @@ async def sync_configured_relays(client: discord.Client) -> None:
                     group_id,
                     webhook_url,
                     direction,
-                    ch_cfg.get("brand_name"),
+                    ch_cfg.get("brand_name") or channel.guild.name,
                     1 if ch_cfg.get("allow_forward_delete", True) else 0,
                     1 if ch_cfg.get("allow_reverse_delete", False) else 0,
                     1 if ch_cfg.get("process_bot_messages", False) else 0,
