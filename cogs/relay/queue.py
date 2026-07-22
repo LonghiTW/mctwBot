@@ -63,6 +63,9 @@ class RelayQueue:
             elif meta.get("thread_name"):
                 params["thread_name"] = meta["thread_name"]
 
+            if params.get("thread_name") or params.get("thread_id"):
+                log.info("QUEUE", f"Posting with {dict(params)}", exec_id)
+
             async with self._session.post(
                 wh_url, json=payload, params=params, raise_for_status=False
             ) as resp:
