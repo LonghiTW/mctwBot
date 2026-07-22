@@ -302,14 +302,6 @@ class RelayCog(commands.Cog):
                     clean.add_field(name=field.name, value=field.value, inline=field.inline)
             payload_embeds.append(clean)
 
-        payload = {
-            "content": final_content,
-            "username": username,
-            "avatar_url": message.author.display_avatar.url,
-            "embeds": [e.to_dict() if hasattr(e, "to_dict") else e for e in payload_embeds],
-            "allowed_mentions": {"parse": ["roles", "users"]},
-        }
-
         relayed = db.fetchall(
             "SELECT relayed_message_id, relayed_channel_id FROM relayed_messages WHERE original_message_id = ?",
             (str(message.id),),
@@ -328,9 +320,9 @@ class RelayCog(commands.Cog):
                 )
                 await wh.edit_message(
                     int(row["relayed_message_id"]),
-                    content=payload["content"],
-                    embeds=payload["embeds"],
-                    allowed_mentions=payload["allowed_mentions"],
+                    content=final_content,
+                    embeds=payload_embeds,
+                    allowed_mentions=discord.AllowedMentions(roles=True, users=True),
                 )
             except discord.NotFound:
                 pass

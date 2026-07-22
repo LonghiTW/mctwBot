@@ -1,5 +1,6 @@
 """Scheduled task — Sunday night image at 21:00."""
-import pytz
+from zoneinfo import ZoneInfo
+
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
 from discord import TextChannel
@@ -11,11 +12,12 @@ from config_sync import load_config
 class SundayReminder(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
-        self.scheduler = AsyncIOScheduler(timezone="Asia/Taipei")
+        self.tz = ZoneInfo("Asia/Taipei")
+        self.scheduler = AsyncIOScheduler(timezone=str(self.tz))
 
         self.scheduler.add_job(
             self.send_image,
-            CronTrigger(day_of_week="sun", hour=21, minute=0, timezone=pytz.timezone("Asia/Taipei")),
+            CronTrigger(day_of_week="sun", hour=21, minute=0, timezone=self.tz),
         )
         self.scheduler.start()
 

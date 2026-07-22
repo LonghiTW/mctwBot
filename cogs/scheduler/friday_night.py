@@ -1,7 +1,7 @@
 """Scheduled task — Friday night GIF at sunset."""
 from datetime import datetime, timedelta
+from zoneinfo import ZoneInfo
 
-import pytz
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.date import DateTrigger
 from astral.sun import sun
@@ -15,8 +15,8 @@ from config_sync import load_config
 class FridayNight(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
-        self.scheduler = AsyncIOScheduler(timezone="Asia/Taipei")
-        self.tz = pytz.timezone("Asia/Taipei")
+        self.tz = ZoneInfo("Asia/Taipei")
+        self.scheduler = AsyncIOScheduler(timezone=str(self.tz))
         self.city = LocationInfo("Taipei", "Taiwan", "Asia/Taipei", 25.0330, 121.5654)
         self.schedule_next_friday()
         self.scheduler.start()
