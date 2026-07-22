@@ -527,7 +527,7 @@ class RelayCog(commands.Cog):
         if large_files:
             payload_content += f"\n*(Note: {len(large_files)} file(s) too large: {', '.join(large_files)})*"
 
-        if original.flags.is_voice_message():
+        if hasattr(original.flags, 'is_voice_message') and original.flags.is_voice_message():
             payload_content += "\n🎤 **[Voice Message]**"
 
         payload_embeds = []
