@@ -214,7 +214,7 @@ class RelayCog(commands.Cog):
                 )
                 if not link or not link["webhook_url"]:
                     continue
-                wh = await discord.Webhook.from_url(
+                wh = discord.Webhook.from_url(
                     link["webhook_url"],
                     session=self.bot.http._HTTPClient__session,
                 )
@@ -314,7 +314,7 @@ class RelayCog(commands.Cog):
                 )
                 if not link_info or not link_info["webhook_url"]:
                     continue
-                wh = await discord.Webhook.from_url(
+                wh = discord.Webhook.from_url(
                     link_info["webhook_url"],
                     session=self.bot.http._HTTPClient__session,
                 )
