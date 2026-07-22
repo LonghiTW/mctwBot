@@ -23,6 +23,7 @@ from .webhook import WebhookManager
 from .routing import (
     linked_channel_id_for_message,
     configured_channel_id_for_stored_channel,
+    webhook_thread_for_stored_channel,
     prepare_thread_route,
 )
 
@@ -234,7 +235,11 @@ class RelayCog(commands.Cog):
                     link["webhook_url"],
                     session=self.bot.http._HTTPClient__session,
                 )
-                await wh.delete_message(int(row["relayed_message_id"]))
+                thread = webhook_thread_for_stored_channel(db, row["relayed_channel_id"])
+                if thread:
+                    await wh.delete_message(int(row["relayed_message_id"]), thread=thread)
+                else:
+                    await wh.delete_message(int(row["relayed_message_id"]))
             except discord.NotFound:
                 pass
             except Exception as exc:
@@ -336,12 +341,15 @@ class RelayCog(commands.Cog):
                     link_info["webhook_url"],
                     session=self.bot.http._HTTPClient__session,
                 )
-                await wh.edit_message(
-                    int(row["relayed_message_id"]),
-                    content=final_content,
-                    embeds=payload_embeds,
-                    allowed_mentions=discord.AllowedMentions(roles=True, users=True),
-                )
+                thread = webhook_thread_for_stored_channel(db, row["relayed_channel_id"])
+                edit_kwargs = {
+                    "content": final_content,
+                    "embeds": payload_embeds,
+                    "allowed_mentions": discord.AllowedMentions(roles=True, users=True),
+                }
+                if thread:
+                    edit_kwargs["thread"] = thread
+                await wh.edit_message(int(row["relayed_message_id"]), **edit_kwargs)
             except discord.NotFound:
                 pass
             except Exception as exc:

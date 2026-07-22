@@ -45,6 +45,24 @@ def configured_channel_id_for_stored_channel(db: DatabaseManager, channel_id: st
     return channel_id
 
 
+def webhook_thread_for_stored_channel(db: DatabaseManager, channel_id: str) -> discord.Object | None:
+    linked = db.fetchone(
+        "SELECT channel_id FROM linked_channels WHERE channel_id = ?", (channel_id,)
+    )
+    if linked:
+        return None
+
+    row = db.fetchone(
+        """SELECT 1 FROM relay_threads
+           WHERE target_thread_id = ? OR source_thread_id = ? LIMIT 1""",
+        (channel_id, channel_id),
+    )
+    if not row:
+        return None
+
+    return discord.Object(id=int(channel_id))
+
+
 async def prepare_thread_route(
     client: discord.Client,
     db: DatabaseManager,
