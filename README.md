@@ -92,14 +92,14 @@ Welcome Cleaner 監聽的歡迎頻道 ID 陣列（需開啟 `welcome_cleaner`）
 
 ##### 頻道設定
 
-| 欄位 | 說明 |
-|------|------|
-| `channel_id` | 頻道 ID（文字頻道或論壇頻道的母頻道 ID） |
-| `direction` | 同步方向：`BOTH` / `SEND_ONLY` / `RECEIVE_ONLY` |
-| `brand_name` | 顯示的名稱標籤，例如「Server A」 |
-| `process_bot_messages` | 是否轉發其他 bot 的訊息 |
-| `allow_forward_delete` | 原始訊息刪除時是否同步刪除中繼副本 |
-| `allow_reverse_delete` | 中繼副本被刪除時是否反刪原始訊息 |
+| 欄位 | 必要 | 說明 |
+|------|------|------|
+| `channel_id` | ✅ 必填 | 頻道 ID（文字頻道或論壇頻道的母頻道 ID） |
+| `direction` | ✅ 必填 | 同步方向：`BOTH` / `SEND_ONLY` / `RECEIVE_ONLY` |
+| `brand_name` | ❌ 選填 | 顯示的名稱標籤，留空則自動帶入伺服器名稱 |
+| `process_bot_messages` | ❌ 選填 | 是否轉發其他 bot 的訊息（預設 `false`） |
+| `allow_forward_delete` | ❌ 選填 | 原始訊息刪除時是否同步刪除中繼副本（預設 `true`） |
+| `allow_reverse_delete` | ❌ 選填 | 中繼副本被刪除時是否反刪原始訊息（預設 `false`） |
 
 ##### 角色映射
 
