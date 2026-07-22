@@ -83,6 +83,7 @@ async def main():
         await relay_queue.stop()
         db.close()
         await bot.close()
+        LogManager.shutdown()
 
     try:
         await bot.start(DISCORD_TOKEN)
