@@ -57,7 +57,7 @@ class RelayQueue:
         exec_id: str = meta.get("execution_id", "")
 
         try:
-            params = {}
+            params = {"wait": "true"}
             if meta.get("target_thread_id"):
                 params["thread_id"] = meta["target_thread_id"]
             elif meta.get("thread_name"):
@@ -71,6 +71,10 @@ class RelayQueue:
                     log.warn("QUEUE-429", f"Retry after {retry_after}s", exec_id)
                     await asyncio.sleep(retry_after)
                     await self._queue.put(item)
+                    return
+
+                if resp.status == 204:
+                    log.info("QUEUE-SEND", f"Delivered (204) to {meta.get('target_channel_id')} — no tracking data", exec_id)
                     return
 
                 if resp.status >= 400:
