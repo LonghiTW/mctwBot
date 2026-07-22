@@ -77,6 +77,15 @@ class RelayCog(commands.Cog):
         if message.webhook_id and message.application_id == self.bot.user.id:
             return
 
+        # Auto-join threads so future messages in it are received
+        if isinstance(message.channel, discord.Thread):
+            try:
+                if message.channel.me is None:
+                    await message.channel.join()
+                    log.info("THREAD", f"Joined thread {message.channel.id} via on_message")
+            except Exception:
+                pass
+
         db = DatabaseManager()
         source_channel_id = linked_channel_id_for_message(message)
         source = db.fetchone(
@@ -327,6 +336,18 @@ class RelayCog(commands.Cog):
                 pass
             except Exception as exc:
                 log.error("EDIT", f"Failed {row['relayed_message_id']}: {exc}")
+
+    # ------------------------------------------------------------------
+    # on_thread_create — auto-join threads so relay can see their messages
+    # ------------------------------------------------------------------
+    @commands.Cog.listener()
+    async def on_thread_create(self, thread: discord.Thread):
+        try:
+            if thread.me is None:
+                await thread.join()
+                log.info("THREAD", f"Joined new thread {thread.id} ({thread.name})")
+        except Exception as exc:
+            log.warn("THREAD", f"Failed to join thread {thread.id}: {exc}")
 
     # ------------------------------------------------------------------
     # on_thread_update — lock / archive / name sync
