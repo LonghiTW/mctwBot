@@ -61,10 +61,9 @@ class RelayQueue:
             if meta.get("target_thread_id"):
                 params["thread_id"] = meta["target_thread_id"]
             elif meta.get("thread_name"):
-                params["thread_name"] = meta["thread_name"]
-
-            if params.get("thread_name") or params.get("thread_id"):
-                log.info("QUEUE", f"Posting with {dict(params)}", exec_id)
+                # thread_name goes in JSON body for forum channel webhooks
+                payload = {**payload, "thread_name": meta["thread_name"]}
+                log.info("QUEUE", f"Posting with thread_name={meta['thread_name']!r}", exec_id)
 
             async with self._session.post(
                 wh_url, json=payload, params=params, raise_for_status=False

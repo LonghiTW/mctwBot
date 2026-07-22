@@ -440,6 +440,16 @@ class RelayCog(commands.Cog):
             try:
                 replied = await original.channel.fetch_message(original.reference.message_id)
             except Exception:
+                pass
+
+            # If fetch failed and channel is a thread, try parent channel
+            if replied is None and isinstance(original.channel, discord.Thread) and original.channel.parent:
+                try:
+                    replied = await original.channel.parent.fetch_message(original.reference.message_id)
+                except Exception:
+                    pass
+
+            if replied is None:
                 reply_embed = Embed(color=0xB0B8C6, description="*Replying to a deleted message.*")
 
             if replied:
