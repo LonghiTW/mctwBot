@@ -367,6 +367,9 @@ class RelayCog(commands.Cog):
         except Exception as exc:
             log.warn("THREAD", f"Failed to join thread {thread.id}: {exc}")
 
+        if await self._mirror_thread_from_relayed_message(thread):
+            return
+
     # ------------------------------------------------------------------
     # on_thread_update — lock / archive / name sync
     # ------------------------------------------------------------------
@@ -441,6 +444,68 @@ class RelayCog(commands.Cog):
     # ------------------------------------------------------------------
     # Helpers
     # ------------------------------------------------------------------
+    async def _mirror_thread_from_relayed_message(self, thread: discord.Thread) -> bool:
+        db = DatabaseManager()
+        link = db.fetchone(
+            """SELECT original_message_id, original_channel_id
+               FROM relayed_messages
+               WHERE relayed_message_id = ? LIMIT 1""",
+            (str(thread.id),),
+        )
+        if not link:
+            return False
+
+        original_cfg_id = configured_channel_id_for_stored_channel(db, link["original_channel_id"])
+        source = db.fetchone(
+            "SELECT group_id FROM linked_channels WHERE channel_id = ?",
+            (original_cfg_id,),
+        )
+        if not source:
+            return True
+
+        existing = db.fetchone(
+            """SELECT 1 FROM relay_threads
+               WHERE group_id = ? AND target_thread_id = ? LIMIT 1""",
+            (source["group_id"], str(thread.id)),
+        )
+        if existing:
+            return True
+
+        try:
+            original_channel = await self.bot.fetch_channel(int(link["original_channel_id"]))
+            original_message = await original_channel.fetch_message(int(link["original_message_id"]))
+            mirrored = await original_message.create_thread(
+                name=thread.name[:100] or "Relayed thread",
+                auto_archive_duration=thread.auto_archive_duration,
+                slowmode_delay=thread.slowmode_delay,
+                reason="Relay thread opened from mirrored message",
+            )
+            try:
+                if mirrored.me is None:
+                    await mirrored.join()
+            except Exception:
+                pass
+        except discord.HTTPException as exc:
+            log.warn("THREAD-MIRROR", f"Failed to mirror starter thread {thread.id}: {exc}")
+            return True
+
+        db.execute(
+            """INSERT OR REPLACE INTO relay_threads
+               (group_id, source_thread_id, source_parent_channel_id,
+                target_parent_channel_id, target_thread_id)
+               VALUES (?, ?, ?, ?, ?)""",
+            (
+                source["group_id"],
+                str(mirrored.id),
+                str(mirrored.parent_id),
+                str(thread.parent_id),
+                str(thread.id),
+            ),
+        )
+        db.commit()
+        log.info("THREAD-MIRROR", f"Mirrored starter thread {thread.id} -> {mirrored.id}")
+        return True
+
     async def _relay_to_target(
         self,
         original: Message, source: dict, target: dict, group: dict,

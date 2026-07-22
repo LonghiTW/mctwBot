@@ -109,10 +109,18 @@ async def prepare_thread_route(
         recovered = db.fetchone(
             """SELECT original_channel_id
                FROM relayed_messages
-               WHERE relayed_channel_id = ? OR relayed_message_id = ?
+               WHERE relayed_message_id = ?
                ORDER BY id LIMIT 1""",
-            (source_thread_id, source_thread_id),
+            (source_thread_id,),
         )
+        if not recovered:
+            recovered = db.fetchone(
+                """SELECT original_channel_id
+                   FROM relayed_messages
+                   WHERE relayed_channel_id = ?
+                   ORDER BY id LIMIT 1""",
+                (source_thread_id,),
+            )
         if recovered and recovered["original_channel_id"] != source_thread_id:
             source_thread_id = recovered["original_channel_id"]
             mirrored_origin = db.fetchone(
