@@ -18,7 +18,7 @@ intents = discord.Intents.default()
 intents.message_content = True
 intents.guild_messages = True
 intents.guilds = True
-intents.guild_members = True
+intents.members = True
 intents.webhooks = True
 if hasattr(intents, "threads"):
     intents.threads = True
