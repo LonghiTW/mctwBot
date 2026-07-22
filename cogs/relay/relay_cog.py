@@ -31,6 +31,12 @@ log = LogManager
 _MAX_USERNAME_LENGTH = 80
 _DISCORD_MSG_LIMIT = 2000
 
+# Only relay these message types — filter out system messages that cause echo loops
+_RELAY_MESSAGE_TYPES = frozenset({
+    discord.MessageType.default,
+    discord.MessageType.reply,
+})
+
 
 class RelayCog(commands.Cog):
     """Handles all relay-related events: message relay, delete/edit sync,
@@ -71,6 +77,8 @@ class RelayCog(commands.Cog):
     @commands.Cog.listener()
     async def on_message(self, message: Message):
         if not message.guild:
+            return
+        if message.type not in _RELAY_MESSAGE_TYPES:
             return
         if message.author.id == self.bot.user.id:
             return
@@ -245,6 +253,8 @@ class RelayCog(commands.Cog):
     async def on_message_edit(self, before: Message, after: Message):
         message = after
         if not message.guild:
+            return
+        if message.type not in _RELAY_MESSAGE_TYPES:
             return
         if message.author.id == self.bot.user.id:
             return
