@@ -126,7 +126,7 @@ class RelayCog(commands.Cog):
 
         # Build sender identity
         sender_name = message.author.display_name
-        server_brand = source.get("brand_name") or message.guild.name
+        server_brand = source["brand_name"] or message.guild.name
         username = f"{sender_name} ({server_brand})"
         if len(username) > _MAX_USERNAME_LENGTH:
             username = username[:_MAX_USERNAME_LENGTH - 3] + "..."
@@ -270,7 +270,7 @@ class RelayCog(commands.Cog):
                 final_content = re.sub(rf"\b{re.escape(f['phrase'])}\b", "***", final_content, flags=re.IGNORECASE)
 
         sender_name = message.author.display_name
-        server_brand = source.get("brand_name") or message.guild.name
+        server_brand = source["brand_name"] or message.guild.name
         username = f"{sender_name} ({server_brand})"
         if len(username) > _MAX_USERNAME_LENGTH:
             username = username[:_MAX_USERNAME_LENGTH - 3] + "..."
