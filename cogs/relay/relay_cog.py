@@ -107,6 +107,9 @@ class RelayCog(commands.Cog):
         if not source["process_bot_messages"] and (message.author.bot or message.webhook_id):
             return
 
+        if isinstance(message.channel, discord.Thread):
+            await self._mirror_thread_from_relayed_message(message.channel)
+
         exec_id = secrets.token_hex(4)
 
         # Blacklist check
@@ -507,7 +510,7 @@ class RelayCog(commands.Cog):
             ),
         )
         db.commit()
-        log.info("THREAD-MIRROR", f"Mirrored starter thread {thread.id} -> {mirrored.id}")
+        log.info("THREAD-MIRROR", f"Mapped original starter thread {mirrored.id} -> relayed starter thread {thread.id}")
         return True
 
     async def _relay_to_target(

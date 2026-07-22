@@ -88,6 +88,15 @@ async def prepare_thread_route(
     route_thread_name = source_message.channel.name or "Relayed thread"
     route_guild_name = source_message.guild.name
 
+    source_side = db.fetchone(
+        """SELECT target_thread_id FROM relay_threads
+           WHERE group_id = ? AND source_thread_id = ? AND target_parent_channel_id = ? LIMIT 1""",
+        (group_id, source_thread_id, target_parent_channel_id),
+    )
+    if source_side:
+        log.info("THREAD-ROUTE", f"Using source-side mapped thread {source_thread_id} -> {source_side['target_thread_id']}")
+        return {"target_thread_id": source_side["target_thread_id"]}
+
     # Resolve: if this thread is itself a mirrored thread, use original source IDs
     mirrored = db.fetchone(
         """SELECT source_thread_id, source_parent_channel_id
