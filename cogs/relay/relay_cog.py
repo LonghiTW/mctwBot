@@ -30,7 +30,6 @@ log = LogManager
 
 _MAX_USERNAME_LENGTH = 80
 _DISCORD_MSG_LIMIT = 2000
-_MAX_PAYLOAD_SIZE = 6.0 * 1024 * 1024  # 6 MB
 
 
 class RelayCog(commands.Cog):
@@ -503,21 +502,19 @@ class RelayCog(commands.Cog):
 
         payload_content = reply_ping + final_content
 
-        # Attachments
-        safe_files = []
-        large_files = []
-        current_size = 0
-        base_payload = {"content": payload_content, "username": username, "avatar_url": avatar_url}
-        initial_json_size = len(str(base_payload))
-
+        # Attachments — append direct URLs to content (Discord auto-embeds them)
+        attachment_urls: list[str] = []
+        large_attachments: list[str] = []
         for att in sorted(original.attachments, key=lambda a: a.size):
-            if initial_json_size + current_size + att.size <= _MAX_PAYLOAD_SIZE:
-                safe_files.append({"attachment": att.url, "name": att.filename})
-                current_size += att.size
+            line = f"\n{att.url}"
+            if len(payload_content) + len(line) + sum(len(u) for u in attachment_urls) <= _DISCORD_MSG_LIMIT - 50:
+                attachment_urls.append(line)
             else:
-                large_files.append(att.filename)
-        if large_files:
-            payload_content += f"\n*(Note: {len(large_files)} file(s) too large: {', '.join(large_files)})*"
+                large_attachments.append(att.filename)
+        if attachment_urls:
+            payload_content += "".join(attachment_urls)
+        if large_attachments:
+            payload_content += f"\n*(Note: {len(large_attachments)} file(s) too large: {', '.join(large_attachments)})*"
 
         payload_embeds = []
         if original.message_snapshots:
@@ -527,9 +524,9 @@ class RelayCog(commands.Cog):
             if snap.embeds:
                 payload_embeds.extend(snap.embeds)
             for att in snap.attachments:
-                if initial_json_size + current_size + att.size <= _MAX_PAYLOAD_SIZE:
-                    safe_files.append({"attachment": att.url, "name": att.filename})
-                    current_size += att.size
+                line = f"\n{att.url}"
+                if len(payload_content) + len(line) <= _DISCORD_MSG_LIMIT - 50:
+                    payload_content += line
 
         if original.poll:
             poll_embed = Embed(color=0x5865F2)
@@ -574,8 +571,6 @@ class RelayCog(commands.Cog):
             "embeds": [e.to_dict() if hasattr(e, "to_dict") else e for e in payload_embeds],
             "allowed_mentions": {"parse": ["roles", "users"]},
         }
-        if safe_files:
-            payload["files"] = safe_files
         if original.stickers:
             s = original.stickers[0]
             payload["content"] += f"\n[Sticker: {s.name}]({s.url})"
