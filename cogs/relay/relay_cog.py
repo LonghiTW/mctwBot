@@ -39,6 +39,16 @@ _RELAY_MESSAGE_TYPES = frozenset({
 })
 
 
+def _is_title_only_thread_starter(message: Message) -> bool:
+    if not isinstance(message.channel, discord.Thread):
+        return False
+    if message.id != message.channel.id:
+        return False
+    if message.attachments or message.embeds or message.stickers or message.poll:
+        return False
+    return (message.content or "").strip() == (message.channel.name or "").strip()
+
+
 class RelayCog(commands.Cog):
     """Handles all relay-related events: message relay, delete/edit sync,
     thread/forum lifecycle sync."""
@@ -159,6 +169,36 @@ class RelayCog(commands.Cog):
         target_map = {t["channel_id"]: t for t in raw_targets}
         targets = list(target_map.values())
         if not targets:
+            return
+
+        if _is_title_only_thread_starter(message):
+            log.info("RELAY", f"Mirroring starter {message.channel.id} without relaying title", exec_id)
+            for target in targets:
+                try:
+                    thread_route = await prepare_thread_route(
+                        self.bot, db, source["group_id"], message, target["channel_id"],
+                    )
+                    if "thread_name" not in thread_route:
+                        continue
+                    payload = {
+                        "content": "\u200b",
+                        "username": username,
+                        "avatar_url": avatar_url,
+                        "embeds": [],
+                        "allowed_mentions": {"parse": []},
+                    }
+                    meta = {
+                        "original_msg_id": str(message.id),
+                        "original_channel_id": str(message.channel.id),
+                        "target_channel_id": target["channel_id"],
+                        "execution_id": exec_id,
+                        "replied_to_id": None,
+                        "group_id": target["group_id"],
+                        **thread_route,
+                    }
+                    await relay_queue.add(target["webhook_url"], payload, meta)
+                except Exception as exc:
+                    log.error("RELAY", f"Failed to mirror starter to {target['channel_id']}: {exc}", exec_id)
             return
 
         log.info("RELAY", f"Relaying {message.id} to {len(targets)} channel(s)", exec_id)
