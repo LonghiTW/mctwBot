@@ -63,6 +63,7 @@ async def sync_configured_relays(client: discord.Client) -> None:
                 client, str(channels[0]["channel_id"])
             )
             owner_guild_id = str(first.guild.id)
+            group_channel_type = type(first)
         except Exception as exc:
             sync_errors.append(
                 f"❌ 群組「{group_name}」無法存取：{exc}，已跳過。"
@@ -96,6 +97,16 @@ async def sync_configured_relays(client: discord.Client) -> None:
             except Exception as exc:
                 sync_errors.append(
                     f"❌ 群組「{group_name}」頻道 {channel_id} 無法存取：{exc}"
+                )
+                continue
+
+            # Type check: all channels in a group must be the same type
+            if not isinstance(channel, type(first)):
+                ch_type = "ForumChannel" if isinstance(channel, discord.ForumChannel) else "TextChannel"
+                group_type = "ForumChannel" if isinstance(first, discord.ForumChannel) else "TextChannel"
+                sync_errors.append(
+                    f"⚠️ 群組「{group_name}」頻道 {channel_id} 是 {ch_type}，"
+                    f"與群組類型 {group_type} 不符，已跳過。"
                 )
                 continue
 
