@@ -86,9 +86,17 @@ class RelayQueue:
 
                 data = await resp.json()
 
-                # Save thread mapping if a thread was created
-                target_channel_id = str(data.get("channel_id") or meta.get("target_channel_id"))
-                if meta.get("thread_name") and data.get("channel_id"):
+                # Save thread mapping if a forum post/thread was created.
+                response_channel_id = data.get("channel_id")
+                created_thread_id = None
+                if isinstance(data.get("thread"), dict):
+                    created_thread_id = data["thread"].get("id")
+                if not created_thread_id and response_channel_id and str(response_channel_id) != str(meta.get("target_channel_id")):
+                    created_thread_id = response_channel_id
+                if not created_thread_id:
+                    created_thread_id = data.get("id")
+                target_channel_id = str(created_thread_id or response_channel_id or meta.get("target_channel_id"))
+                if meta.get("thread_name") and created_thread_id:
                     db = DatabaseManager()
                     try:
                         db.execute(
@@ -105,6 +113,11 @@ class RelayQueue:
                             ),
                         )
                         db.commit()
+                        log.info(
+                            "THREAD-MAP",
+                            f"Saved {meta.get('source_thread_id')} -> {target_channel_id}",
+                            exec_id,
+                        )
                     except Exception as e:
                         log.error("QUEUE-DB", f"Save thread mapping failed: {e}", exec_id)
 

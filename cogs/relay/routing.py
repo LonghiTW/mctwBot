@@ -3,6 +3,10 @@ import discord
 
 from database import DatabaseManager
 from utils.channel_utils import fetch_configurable_channel
+from utils.log_manager import LogManager
+
+
+log = LogManager
 
 
 def is_thread_channel(channel) -> bool:
@@ -54,31 +58,94 @@ async def prepare_thread_route(
     1. Regular message → any: no routing
     2. Thread/forum post → TextChannel: mirror thread
     3. Thread/forum post → ForumChannel: mirror post via thread_name
+    4. Mirrored thread → resolve to original source, then route accordingly
     """
     if not is_thread_channel(source_message.channel):
         return {}
 
     target_parent = await fetch_configurable_channel(client, target_parent_channel_id)
+    current_thread_id = str(source_message.channel.id)
     source_thread_id = str(source_message.channel.id)
     source_parent_id = str(source_message.channel.parent_id)
+    route_thread_name = source_message.channel.name or "Relayed thread"
+    route_guild_name = source_message.guild.name
 
-    # Check existing mapping
+    # Resolve: if this thread is itself a mirrored thread, use original source IDs
+    mirrored = db.fetchone(
+        """SELECT source_thread_id, source_parent_channel_id
+           FROM relay_threads
+           WHERE group_id = ? AND target_thread_id = ? LIMIT 1""",
+        (group_id, source_thread_id),
+    )
+    if mirrored:
+        source_thread_id = mirrored["source_thread_id"]
+        source_parent_id = mirrored["source_parent_channel_id"]
+        try:
+            original_thread = await client.fetch_channel(int(source_thread_id))
+            route_thread_name = original_thread.name or route_thread_name
+            route_guild_name = original_thread.guild.name
+        except Exception:
+            pass
+        log.info("THREAD-ROUTE", f"Resolved mirror {current_thread_id} -> {source_thread_id}")
+    else:
+        recovered = db.fetchone(
+            """SELECT original_channel_id
+               FROM relayed_messages
+               WHERE relayed_channel_id = ? OR relayed_message_id = ?
+               ORDER BY id LIMIT 1""",
+            (source_thread_id, source_thread_id),
+        )
+        if recovered and recovered["original_channel_id"] != source_thread_id:
+            source_thread_id = recovered["original_channel_id"]
+            mirrored_origin = db.fetchone(
+                """SELECT source_thread_id, source_parent_channel_id
+                   FROM relay_threads
+                   WHERE group_id = ? AND target_thread_id = ? LIMIT 1""",
+                (group_id, source_thread_id),
+            )
+            if mirrored_origin:
+                source_thread_id = mirrored_origin["source_thread_id"]
+                source_parent_id = mirrored_origin["source_parent_channel_id"]
+            else:
+                try:
+                    original_thread = await client.fetch_channel(int(source_thread_id))
+                    source_parent_id = str(original_thread.parent_id)
+                    route_thread_name = original_thread.name or route_thread_name
+                    route_guild_name = original_thread.guild.name
+                except Exception:
+                    pass
+            db.execute(
+                """INSERT OR IGNORE INTO relay_threads
+                   (group_id, source_thread_id, source_parent_channel_id,
+                    target_parent_channel_id, target_thread_id)
+                   VALUES (?, ?, ?, ?, ?)""",
+                (group_id, source_thread_id, source_parent_id,
+                 str(source_message.channel.parent_id), current_thread_id),
+            )
+            db.commit()
+            log.info("THREAD-ROUTE", f"Recovered mirror {current_thread_id} -> {source_thread_id}")
+
+    # Check existing mapping (source → target for this target channel)
     existing = db.fetchone(
         """SELECT target_thread_id FROM relay_threads
            WHERE group_id = ? AND source_thread_id = ? AND target_parent_channel_id = ?""",
         (group_id, source_thread_id, target_parent_channel_id),
     )
     if existing:
+        log.info("THREAD-ROUTE", f"Using mapped thread {source_thread_id} -> {existing['target_thread_id']}")
         return {"target_thread_id": existing["target_thread_id"]}
+
+    # If target is the source thread's own parent channel, send back to original
+    if source_parent_id == target_parent_channel_id:
+        log.info("THREAD-ROUTE", f"Routing back to source thread {source_thread_id}")
+        return {"target_thread_id": source_thread_id}
 
     # Build thread name
     if isinstance(target_parent, discord.ForumChannel):
-        # Forum → Forum: "original title (server name)"
-        orig = source_message.channel.name[:92] or "Relay"
-        thread_name = f"{orig}({source_message.guild.name})"[:100]
+        orig = route_thread_name[:92] or "Relay"
+        thread_name = f"{orig}({route_guild_name})"[:100]
     else:
-        # Thread → TextChannel: use original thread name
-        thread_name = (source_message.channel.name or "Relayed thread")[:100]
+        thread_name = route_thread_name[:100]
 
     if isinstance(target_parent, discord.TextChannel):
         # Create mirror thread in target TextChannel
