@@ -82,19 +82,21 @@ class RelayQueue:
                 if resp.status >= 400:
                     body = await resp.text()
                     log.error("QUEUE-FAIL", f"HTTP {resp.status}: {body[:200]}", exec_id)
+                    if resp.status == 404 and "10003" in body and meta.get("target_thread_id"):
+                        db = DatabaseManager()
+                        db.execute(
+                            "DELETE FROM relay_threads WHERE target_thread_id = ?",
+                            (str(meta["target_thread_id"]),),
+                        )
+                        db.commit()
+                        log.warn("THREAD-MAP", f"Removed stale thread mapping {meta['target_thread_id']}", exec_id)
                     return
 
                 data = await resp.json()
 
-                # Save thread mapping if a forum post/thread was created.
+                # For forum webhooks, the response message's channel_id is the created post/thread.
                 response_channel_id = data.get("channel_id")
-                created_thread_id = None
-                if isinstance(data.get("thread"), dict):
-                    created_thread_id = data["thread"].get("id")
-                if not created_thread_id and response_channel_id and str(response_channel_id) != str(meta.get("target_channel_id")):
-                    created_thread_id = response_channel_id
-                if not created_thread_id:
-                    created_thread_id = data.get("id")
+                created_thread_id = response_channel_id if meta.get("thread_name") else None
                 target_channel_id = str(created_thread_id or response_channel_id or meta.get("target_channel_id"))
                 if meta.get("thread_name") and created_thread_id:
                     db = DatabaseManager()
