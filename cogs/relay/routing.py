@@ -49,13 +49,32 @@ async def prepare_thread_route(
     source_message: discord.Message,
     target_parent_channel_id: str,
 ) -> dict:
-    """Return webhook metadata for preserving a source thread/forum post."""
-    if not is_thread_channel(source_message.channel):
+    """Return webhook metadata for routing to the correct thread/forum post.
+
+    Handles four cases:
+    1. Regular channel → regular channel: no routing
+    2. Thread/forum post → regular channel: mirror thread (existing)
+    3. Thread/forum post → forum channel: mirror via webhook thread_name
+    4. Regular channel → forum channel: create relay thread in forum
+    """
+    target_parent = await fetch_configurable_channel(client, target_parent_channel_id)
+    is_forum_target = isinstance(target_parent, discord.ForumChannel)
+
+    source_is_thread = is_thread_channel(source_message.channel)
+
+    if not source_is_thread and not is_forum_target:
         return {}
 
-    source_thread_id = str(source_message.channel.id)
-    source_parent_channel_id = str(source_message.channel.parent_id)
+    # Determine mapping key
+    if source_is_thread:
+        source_thread_id = str(source_message.channel.id)
+        source_parent_channel_id = str(source_message.channel.parent_id)
+    else:
+        # Non-thread → forum: use channel ID as mapping key
+        source_thread_id = str(source_message.channel.id)
+        source_parent_channel_id = str(source_message.channel.id)
 
+    # Check existing mapping
     existing = db.fetchone(
         """SELECT target_thread_id FROM relay_threads
            WHERE group_id = ? AND source_thread_id = ? AND target_parent_channel_id = ?""",
@@ -69,8 +88,11 @@ async def prepare_thread_route(
             "target_parent_channel_id": target_parent_channel_id,
         }
 
-    target_parent = await fetch_configurable_channel(client, target_parent_channel_id)
-    thread_name = source_message.channel.name[:100] or "Relayed thread"
+    thread_name = (
+        source_message.channel.name[:100]
+        if source_is_thread
+        else f"Relay from {source_message.guild.name}"
+    )
 
     if isinstance(target_parent, discord.TextChannel):
         created = await target_parent.create_thread(
@@ -94,9 +116,11 @@ async def prepare_thread_route(
             "target_parent_channel_id": target_parent_channel_id,
         }
 
+    # ForumChannel target — webhook creates the thread/post on first send
     return {
         "thread_name": thread_name,
         "source_thread_id": source_thread_id,
         "source_parent_channel_id": source_parent_channel_id,
         "target_parent_channel_id": target_parent_channel_id,
+        "group_id": group_id,
     }
