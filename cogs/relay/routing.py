@@ -2,6 +2,7 @@
 import discord
 
 from database import DatabaseManager
+from utils.channel_utils import fetch_configurable_channel
 
 
 def is_thread_channel(channel) -> bool:
@@ -39,15 +40,6 @@ def configured_channel_id_for_stored_channel(db: DatabaseManager, channel_id: st
             return row["target_parent_channel_id"]
 
     return channel_id
-
-
-async def fetch_configurable_channel(client: discord.Client, channel_id: str):
-    ch = client.get_channel(int(channel_id))
-    if ch is None:
-        ch = await client.fetch_channel(int(channel_id))
-    if not isinstance(ch, (discord.TextChannel, discord.ForumChannel)):
-        raise RuntimeError(f"Channel {channel_id} must be Text or Forum channel.")
-    return ch
 
 
 async def prepare_thread_route(

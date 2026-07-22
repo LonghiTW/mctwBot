@@ -8,7 +8,7 @@ from config import CONFIG_PATH
 from database import DatabaseManager
 from utils.log_manager import LogManager
 from utils.admin_notifier import notify_admins
-from cogs.relay.routing import fetch_configurable_channel
+from utils.channel_utils import fetch_configurable_channel
 
 log = LogManager
 
