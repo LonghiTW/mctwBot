@@ -22,16 +22,21 @@ def configured_channel_id_for_stored_channel(db: DatabaseManager, channel_id: st
     if linked:
         return linked["channel_id"]
 
-    for tbl, col in [
-        ("relay_threads", "target_thread_id"),
-        ("relay_threads", "source_thread_id"),
-    ]:
-        row = db.fetchone(
-            f"SELECT target_parent_channel_id FROM {tbl} WHERE {col} = ? LIMIT 1",
-            (channel_id,),
-        )
-        if row:
-            return row["target_parent_channel_id"]
+    row = db.fetchone(
+        """SELECT target_parent_channel_id FROM relay_threads
+           WHERE target_thread_id = ? LIMIT 1""",
+        (channel_id,),
+    )
+    if row:
+        return row["target_parent_channel_id"]
+
+    row = db.fetchone(
+        """SELECT source_parent_channel_id FROM relay_threads
+           WHERE source_thread_id = ? LIMIT 1""",
+        (channel_id,),
+    )
+    if row:
+        return row["source_parent_channel_id"]
 
     return channel_id
 
@@ -43,32 +48,61 @@ async def prepare_thread_route(
     source_message: discord.Message,
     target_parent_channel_id: str,
 ) -> dict:
-    """Return webhook metadata for routing to forum channels.
+    """Return webhook metadata for routing threads/forum posts.
 
-    Forum channels require a thread_name or thread_id for webhook posts.
-    One relay thread is maintained per source channel in each target forum.
-    Regular text channels need no thread routing.
+    Cases:
+    1. Regular message → any: no routing
+    2. Thread/forum post → TextChannel: mirror thread
+    3. Thread/forum post → ForumChannel: mirror post via thread_name
     """
-    target_parent = await fetch_configurable_channel(client, target_parent_channel_id)
-
-    if not isinstance(target_parent, discord.ForumChannel):
+    if not is_thread_channel(source_message.channel):
         return {}
 
-    source_key = linked_channel_id_for_message(source_message)
+    target_parent = await fetch_configurable_channel(client, target_parent_channel_id)
+    source_thread_id = str(source_message.channel.id)
+    source_parent_id = str(source_message.channel.parent_id)
 
+    # Check existing mapping
     existing = db.fetchone(
         """SELECT target_thread_id FROM relay_threads
            WHERE group_id = ? AND source_thread_id = ? AND target_parent_channel_id = ?""",
-        (group_id, source_key, target_parent_channel_id),
+        (group_id, source_thread_id, target_parent_channel_id),
     )
     if existing:
         return {"target_thread_id": existing["target_thread_id"]}
 
-    # First time — webhook will create a new forum post, queue.py saves the mapping
+    # Build thread name
+    if isinstance(target_parent, discord.ForumChannel):
+        # Forum → Forum: "original title (server name)"
+        orig = source_message.channel.name[:92] or "Relay"
+        thread_name = f"{orig}({source_message.guild.name})"[:100]
+    else:
+        # Thread → TextChannel: use original thread name
+        thread_name = (source_message.channel.name or "Relayed thread")[:100]
+
+    if isinstance(target_parent, discord.TextChannel):
+        # Create mirror thread in target TextChannel
+        created = await target_parent.create_thread(
+            name=thread_name,
+            type=discord.ChannelType.public_thread,
+            reason="Relay thread mirror",
+        )
+        db.execute(
+            """INSERT OR REPLACE INTO relay_threads
+               (group_id, source_thread_id, source_parent_channel_id,
+                target_parent_channel_id, target_thread_id)
+               VALUES (?, ?, ?, ?, ?)""",
+            (group_id, source_thread_id, source_parent_id,
+             target_parent_channel_id, str(created.id)),
+        )
+        db.commit()
+        return {"target_thread_id": str(created.id)}
+
+    # ForumChannel target — webhook will create the post, queue.py saves mapping
     return {
-        "thread_name": f"Relay from {source_message.guild.name}",
-        "source_thread_id": source_key,
-        "source_parent_channel_id": source_key,
+        "thread_name": thread_name,
+        "source_thread_id": source_thread_id,
+        "source_parent_channel_id": source_parent_id,
         "target_parent_channel_id": target_parent_channel_id,
         "group_id": group_id,
     }
