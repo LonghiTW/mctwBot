@@ -490,6 +490,10 @@ class RelayCog(commands.Cog):
             return True
 
         db.execute(
+            "DELETE FROM relay_threads WHERE group_id = ? AND target_thread_id = ?",
+            (source["group_id"], str(thread.id)),
+        )
+        db.execute(
             """INSERT OR REPLACE INTO relay_threads
                (group_id, source_thread_id, source_parent_channel_id,
                 target_parent_channel_id, target_thread_id)

@@ -113,14 +113,6 @@ async def prepare_thread_route(
                ORDER BY id LIMIT 1""",
             (source_thread_id,),
         )
-        if not recovered:
-            recovered = db.fetchone(
-                """SELECT original_channel_id
-                   FROM relayed_messages
-                   WHERE relayed_channel_id = ?
-                   ORDER BY id LIMIT 1""",
-                (source_thread_id,),
-            )
         if recovered and recovered["original_channel_id"] != source_thread_id:
             source_thread_id = recovered["original_channel_id"]
             mirrored_origin = db.fetchone(
@@ -151,6 +143,11 @@ async def prepare_thread_route(
             db.commit()
             log.info("THREAD-ROUTE", f"Recovered mirror {current_thread_id} -> {source_thread_id}")
 
+    # If target is the source thread's own parent channel, send back to original
+    if source_parent_id == target_parent_channel_id:
+        log.info("THREAD-ROUTE", f"Routing back to source thread {source_thread_id}")
+        return {"target_thread_id": source_thread_id}
+
     # Check existing mapping (source → target for this target channel)
     existing = db.fetchone(
         """SELECT target_thread_id FROM relay_threads
@@ -160,11 +157,6 @@ async def prepare_thread_route(
     if existing:
         log.info("THREAD-ROUTE", f"Using mapped thread {source_thread_id} -> {existing['target_thread_id']}")
         return {"target_thread_id": existing["target_thread_id"]}
-
-    # If target is the source thread's own parent channel, send back to original
-    if source_parent_id == target_parent_channel_id:
-        log.info("THREAD-ROUTE", f"Routing back to source thread {source_thread_id}")
-        return {"target_thread_id": source_thread_id}
 
     # Build thread name
     if isinstance(target_parent, discord.ForumChannel):
