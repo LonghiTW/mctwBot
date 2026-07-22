@@ -178,30 +178,25 @@ class RelayCog(commands.Cog):
                     thread_route = await prepare_thread_route(
                         self.bot, db, source["group_id"], message, target["channel_id"],
                     )
-                    if "thread_name" in thread_route:
-                        payload = {
-                            "content": "\u200b",
-                            "username": username,
-                            "avatar_url": avatar_url,
-                            "embeds": [],
-                            "allowed_mentions": {"parse": []},
-                        }
-                        meta = {
-                            "original_msg_id": str(message.id),
-                            "original_channel_id": str(message.channel.id),
-                            "target_channel_id": target["channel_id"],
-                            "execution_id": exec_id,
-                            "replied_to_id": None,
-                            "group_id": target["group_id"],
-                            **thread_route,
-                        }
-                        await relay_queue.add(target["webhook_url"], payload, meta)
-                    elif thread_route.get("target_thread_id"):
-                        log.info(
-                            "RELAY",
-                            f"Created mirrored thread {thread_route['target_thread_id']} for starter {message.channel.id}",
-                            exec_id,
-                        )
+                    if "thread_name" not in thread_route:
+                        continue
+                    payload = {
+                        "content": "\u200b",
+                        "username": username,
+                        "avatar_url": avatar_url,
+                        "embeds": [],
+                        "allowed_mentions": {"parse": []},
+                    }
+                    meta = {
+                        "original_msg_id": str(message.id),
+                        "original_channel_id": str(message.channel.id),
+                        "target_channel_id": target["channel_id"],
+                        "execution_id": exec_id,
+                        "replied_to_id": None,
+                        "group_id": target["group_id"],
+                        **thread_route,
+                    }
+                    await relay_queue.add(target["webhook_url"], payload, meta)
                 except Exception as exc:
                     log.error("RELAY", f"Failed to mirror starter to {target['channel_id']}: {exc}", exec_id)
             return
