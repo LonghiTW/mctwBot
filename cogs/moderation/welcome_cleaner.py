@@ -18,6 +18,10 @@ class WelcomeCleaner(commands.Cog):
 
     def _get_channels(self) -> set[int]:
         cfg = load_config()
+        moderation = cfg.get("moderation", {})
+        welcome_cleaner = moderation.get("welcome_cleaner", {})
+        if "channels" in welcome_cleaner:
+            return set(welcome_cleaner.get("channels", []))
         return set(cfg.get("welcome_channels", []))
 
     @commands.Cog.listener()

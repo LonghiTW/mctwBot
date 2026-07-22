@@ -1,18 +1,62 @@
 {
   "admin_user_ids": [],
 
-  "features": {
-    "keyword_responder": true,
-    "scheduler": true,
-    "welcome_cleaner": true,
-    "ping_command": true
+  "bots": [
+    {
+      "id": "alliance",
+      "token_env": "BOT_TOKEN_ALLIANCE",
+      "command_prefix": "!",
+      "features": {
+        "relay": true,
+        "keywords": false,
+        "scheduler": false,
+        "moderation": false,
+        "commands": true,
+        "admin": true
+      }
+    },
+    {
+      "id": "ops",
+      "token_env": "BOT_TOKEN_OPS",
+      "command_prefix": "!",
+      "features": {
+        "relay": false,
+        "keywords": true,
+        "scheduler": true,
+        "moderation": true,
+        "commands": true,
+        "admin": true
+      }
+    }
+  ],
+
+  "commands": {},
+
+  "keywords": {
+    "hello": {
+      "enabled": true
+    },
+    "birthday": {
+      "enabled": true
+    }
   },
 
-  "welcome_channels": [],
+  "moderation": {
+    "welcome_cleaner": {
+      "enabled": true,
+      "channels": []
+    }
+  },
 
-  "scheduler_channels": {
-    "friday_night": [],
-    "sunday_night": []
+  "scheduler": {
+    "friday_night": {
+      "enabled": true,
+      "channels": []
+    },
+    "sunday_night": {
+      "enabled": true,
+      "channels": []
+    }
   },
 
   "relay": {

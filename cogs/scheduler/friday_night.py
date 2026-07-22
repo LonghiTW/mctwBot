@@ -23,6 +23,9 @@ class FridayNight(commands.Cog):
 
     def _get_channels(self) -> list[int]:
         cfg = load_config()
+        friday_night = cfg.get("scheduler", {}).get("friday_night", {})
+        if "channels" in friday_night:
+            return friday_night.get("channels", [])
         return cfg.get("scheduler_channels", {}).get("friday_night", [])
 
     def schedule_next_friday(self):

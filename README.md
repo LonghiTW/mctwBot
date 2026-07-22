@@ -6,11 +6,12 @@
 
 | 模組 | 說明 | 預設開關 |
 |------|------|---------|
-| **Relay** (永遠啟用) | 跨伺服器訊息橋接 — 支援文字頻道、討論串、論壇貼文的雙向同步 | ✅ 強制 |
-| **Keyword Responder** | 被動關鍵字回應 — 「你好/hello」「生日/birthday/hbd」 | ✅ 可關閉 |
+| **Relay** | 跨伺服器訊息橋接 — 支援文字頻道、討論串、論壇貼文的雙向同步 | ✅ 單一 bot profile 可啟用 |
+| **Keywords** | 被動關鍵字回應 — 「你好/hello」「生日/birthday/hbd」 | ✅ 可關閉 |
 | **Scheduler** | 定時任務 — 週五日落 gif、週日 21:00 圖片 | ✅ 可關閉 |
-| **Welcome Cleaner** | 成員離開時自動刪除歡迎訊息 | ✅ 可關閉 |
-| **Ping** | `!ping` 基本存活確認指令 | ✅ 可關閉 |
+| **Moderation** | 頻道與成員管理，目前包含 Welcome Cleaner | ✅ 可關閉 |
+| **Commands** | 基本指令模組，目前包含 `!ping` | ✅ 可關閉 |
+| **Admin** | 管理員功能，目前包含 JSON 訊息控制 | ✅ 可關閉 |
 
 ## 快速開始
 
@@ -20,7 +21,7 @@ pip install -r requirements.txt
 
 # 2. 設定環境變數
 cp .env.example .env
-# 編輯 .env，填入 DISCORD_TOKEN 和 CLIENT_ID
+# 編輯 .env，填入 config.json 中各 profile 指定的 bot token
 
 # 3. 建立設定檔
 cp config.json.example config.json
@@ -36,8 +37,8 @@ python run.py
 
 | 變數 | 說明 |
 |------|------|
-| `DISCORD_TOKEN` | Discord Bot Token（必填） |
-| `CLIENT_ID` | Discord Bot Client ID（必填） |
+| `BOT_TOKEN_ALLIANCE` | `alliance` bot profile 的 Token（範例，可自行改名） |
+| `BOT_TOKEN_OPS` | `ops` bot profile 的 Token（範例，可自行改名） |
 | `RELAY_QUEUE_DELAY_MS` | Webhook 發送間隔毫秒（預設 600） |
 | `CONFIG_PATH` | 設定檔路徑（預設 `config.json`） |
 
@@ -51,35 +52,129 @@ python run.py
 "admin_user_ids": ["123456789012345678"]
 ```
 
-#### `features`
+#### `bots`
 
-各功能的開關：
+可選的 bot profile 列表。每個 profile 對應一組 bot token，並用 `features` 決定要載入哪些 Cog。若未設定 `bots`，程式會使用舊版單 bot 模式：`DISCORD_TOKEN`，但建議新設定都使用 `bots`。
 
 ```json
-"features": {
-  "keyword_responder": true,
-  "scheduler": true,
-  "welcome_cleaner": true,
-  "ping_command": true
+"bots": [
+  {
+    "id": "alliance",
+    "token_env": "BOT_TOKEN_ALLIANCE",
+    "command_prefix": "!",
+    "features": {
+      "relay": true,
+      "commands": true,
+      "admin": true
+    }
+  },
+  {
+    "id": "ops",
+    "token_env": "BOT_TOKEN_OPS",
+    "command_prefix": "!",
+    "features": {
+      "relay": false,
+      "keywords": true,
+      "scheduler": true,
+      "moderation": true,
+      "commands": true,
+      "admin": true
+    }
+  }
+]
+```
+
+`relay` 同一時間只能在一個 profile 啟用，避免多個 bot 同時處理同一批中繼事件。
+
+`features` 使用大分類控制 Cog 載入，所有功能預設都是 `false`，需要的模組必須在各 profile 中明確啟用。細項設定放在各分類自己的區塊，例如 `moderation.welcome_cleaner`。
+
+> `commands` 目前只載入 `ping`；`admin` 是獨立 feature，專門處理管理員功能。
+
+#### `commands`
+
+Commands 類功能目前提供基本指令：
+
+```text
+!ping
+```
+
+#### `admin`
+
+Admin 類功能目前提供 JSON 訊息控制，只有 `admin_user_ids` 內的使用者可以使用：
+
+```text
+!msg send #channel {"content":"文字內容"}
+!msg edit message_id {"content":"新文字內容"}
+!msg delete message_id
+!msg source message_id
+```
+
+所有訊息都使用同一種 JSON 格式：
+
+```json
+{
+  "content": "今天 21:00 開會",
+  "embeds": [
+    {
+      "title": "公告",
+      "description": "請準時到語音頻道",
+      "color": "#5865F2",
+      "fields": [
+        {
+          "name": "地點",
+          "value": "語音頻道",
+          "inline": true
+        }
+      ]
+    }
+  ]
 }
 ```
 
-#### `welcome_channels`
+`source` 會輸出指定訊息的 JSON，方便複製後微調再用 `edit`。`edit` / `delete` 只會操作同一隻 bot 自己發出的訊息。
 
-Welcome Cleaner 監聽的歡迎頻道 ID 陣列（需開啟 `welcome_cleaner`）：
+#### `keywords`
+
+Keywords 類功能的細項設定（需在 profile 開啟 `keywords`）：
 
 ```json
-"welcome_channels": ["1015827632731996251"]
+"keywords": {
+  "hello": {
+    "enabled": true
+  },
+  "birthday": {
+    "enabled": true
+  }
+}
 ```
 
-#### `scheduler_channels`
+#### `moderation`
 
-定時任務的發送頻道：
+Moderation 類功能的細項設定（需在 profile 開啟 `moderation`）：
 
 ```json
-"scheduler_channels": {
-  "friday_night": ["1349540882369478688"],
-  "sunday_night": ["1349540882369478688"]
+"moderation": {
+  "welcome_cleaner": {
+    "enabled": true,
+    "channels": ["1015827632731996251"]
+  }
+}
+```
+
+#### `scheduler`
+
+Scheduler 類功能的細項設定（需在 profile 開啟 `scheduler`）：
+
+```json
+"scheduler": {
+  "friday_night": {
+    "enabled": true,
+    "channels": ["1349540882369478688"]
+  },
+  "sunday_night": {
+    "enabled": true,
+    "channels": ["1349540882369478688"]
+  }
 }
 ```
 
@@ -136,8 +231,9 @@ Welcome Cleaner 監聽的歡迎頻道 ID 陣列（需開啟 `welcome_cleaner`）
 
 ```
 Bot/
-├── main.py              ← 啟動入口，註冊各模組
+├── main.py              ← 啟動入口，建立 bot profiles 並註冊各模組
 ├── run.py               ← python run.py 啟動腳本
+├── bot_profiles.py      ← 多 bot token profile 載入與驗證
 ├── config.py            ← 讀取 .env
 ├── config_sync.py       ← 讀取 config.json → SQLite
 ├── database/
@@ -157,4 +253,5 @@ Bot/
 ## 注意事項
 
 - 討論串和論壇貼文的中繼需要 bot 有「管理討論串」權限
+- Relay 功能只能在一個 bot profile 啟用
 - 設定檔修改後需重啟 bot 才會生效

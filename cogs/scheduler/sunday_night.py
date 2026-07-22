@@ -23,6 +23,9 @@ class SundayReminder(commands.Cog):
 
     def _get_channels(self) -> list[int]:
         cfg = load_config()
+        sunday_night = cfg.get("scheduler", {}).get("sunday_night", {})
+        if "channels" in sunday_night:
+            return sunday_night.get("channels", [])
         return cfg.get("scheduler_channels", {}).get("sunday_night", [])
 
     async def send_image(self):
