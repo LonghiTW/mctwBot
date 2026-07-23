@@ -6,7 +6,7 @@ from apscheduler.triggers.cron import CronTrigger
 from discord import TextChannel
 from discord.ext import commands
 
-from config_sync import load_config
+from app.config_sync import load_config
 
 
 class SundayReminder(commands.Cog):

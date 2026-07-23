@@ -5,9 +5,9 @@ import sys
 import discord
 from discord.ext import commands
 
-from bot_profiles import BotProfile, load_bot_profiles, validate_bot_profiles
-from config_validator import validate_config
-from config_sync import load_config
+from app.bot_profiles import BotProfile, load_bot_profiles, validate_bot_profiles
+from app.config_validator import validate_config
+from app.config_sync import load_config
 from database import DatabaseManager
 from utils.log_manager import LogManager
 from utils.admin_notifier import notify_admins

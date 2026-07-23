@@ -250,10 +250,11 @@ Scheduler 類功能的細項設定（需在 profile 開啟 `scheduler`）：
 Bot/
 ├── main.py              ← 啟動入口，建立 bot profiles 並註冊各模組
 ├── run.py               ← python run.py 啟動腳本
-├── bot_profiles.py      ← 多 bot token profile 載入與驗證
-├── config.py            ← 讀取 .env
-├── config_validator.py  ← 啟動早期驗證 config.json
-├── config_sync.py       ← 讀取 config.json → SQLite
+├── app/
+│   ├── bot_profiles.py      ← 多 bot token profile 載入與驗證
+│   ├── config.py            ← 讀取 .env
+│   ├── config_validator.py  ← 啟動早期驗證 config.json
+│   └── config_sync.py       ← 讀取 config.json → SQLite
 ├── data/                ← SQLite runtime 檔案（不進 git）
 ├── database/
 │   └── database.py      ← SQLite + migration

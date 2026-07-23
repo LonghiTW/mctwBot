@@ -24,6 +24,7 @@ class BotProfile:
     def token(self) -> str:
         return os.getenv(self.token_env, "")
 
+
 def load_bot_profiles(config: dict) -> list[BotProfile]:
     configured = config.get("bots")
     if configured:

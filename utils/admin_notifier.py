@@ -2,7 +2,7 @@
 import json
 from pathlib import Path
 
-from config import CONFIG_PATH
+from app.config import CONFIG_PATH
 from .log_manager import LogManager
 
 log = LogManager

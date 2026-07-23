@@ -12,12 +12,12 @@ import discord
 from discord import Message, Embed, TextChannel
 from discord.ext import commands
 
-from config import RELAY_QUEUE_DELAY_MS
+from app.config import RELAY_QUEUE_DELAY_MS
 from database import DatabaseManager
 from utils.log_manager import LogManager
 from utils.time_utils import snowflake_before
 from utils.admin_notifier import notify_admins
-from config_sync import sync_configured_relays, load_config
+from app.config_sync import sync_configured_relays, load_config
 from .queue import relay_queue
 from .webhook import WebhookManager
 from .routing import (

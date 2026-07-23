@@ -9,7 +9,7 @@ from astral import LocationInfo
 from discord import TextChannel
 from discord.ext import commands
 
-from config_sync import load_config
+from app.config_sync import load_config
 
 
 class FridayNight(commands.Cog):

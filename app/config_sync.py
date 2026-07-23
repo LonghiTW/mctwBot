@@ -4,7 +4,7 @@ from pathlib import Path
 
 import discord
 
-from config import CONFIG_PATH
+from app.config import CONFIG_PATH
 from database import DatabaseManager
 from utils.log_manager import LogManager
 from utils.admin_notifier import notify_admins

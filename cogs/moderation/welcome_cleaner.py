@@ -7,7 +7,7 @@ Discord's system welcome messages (sent by system, not bot). Now uses
 import discord
 from discord.ext import commands
 
-from config_sync import load_config
+from app.config_sync import load_config
 
 
 class WelcomeCleaner(commands.Cog):

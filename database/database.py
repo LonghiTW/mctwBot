@@ -4,7 +4,7 @@ import sqlite3
 import threading
 from pathlib import Path
 
-from config import DATABASE_PATH
+from app.config import DATABASE_PATH
 
 MIGRATIONS = [
     {

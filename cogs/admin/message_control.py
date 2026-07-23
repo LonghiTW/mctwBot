@@ -7,7 +7,7 @@ from io import BytesIO
 import discord
 from discord.ext import commands
 
-from config_sync import load_config
+from app.config_sync import load_config
 
 
 class MessageControl(commands.Cog):
