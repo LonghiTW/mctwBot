@@ -79,9 +79,9 @@
             "allow_forward_delete": true,
             "allow_reverse_delete": false
           }
-        ],
-        "role_mappings": []
+        ]
       }
-    ]
+    ],
+    "role_mappings": []
   }
 }

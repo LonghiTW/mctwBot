@@ -45,6 +45,7 @@ async def sync_configured_relays(client: discord.Client) -> None:
     db = DatabaseManager()
     configured_channel_ids: set[str] = set()
     configured_group_names: set[str] = set()
+    configured_group_ids_by_name: dict[str, int] = {}
     sync_errors: list[str] = []
 
     for group_cfg in groups:
@@ -83,6 +84,7 @@ async def sync_configured_relays(client: discord.Client) -> None:
             "SELECT group_id FROM relay_groups WHERE group_name = ?", (group_name,)
         )
         group_id = group["group_id"]
+        configured_group_ids_by_name[group_name] = group_id
 
         for ch_cfg in channels:
             channel_id = str(ch_cfg.get("channel_id", "")).strip()
@@ -165,22 +167,32 @@ async def sync_configured_relays(client: discord.Client) -> None:
                 ),
             )
 
-        # Role mappings
-        db.execute("DELETE FROM role_mappings WHERE group_id = ?", (group_id,))
-        for mapping in group_cfg.get("role_mappings", []):
-            common_name = str(mapping.get("common_name", "")).strip()
-            guild_id = str(mapping.get("guild_id", "")).strip()
-            role_id = str(mapping.get("role_id", "")).strip()
-            if not common_name or not guild_id or not role_id:
-                sync_errors.append(f"⚠️ 群組「{group_name}」有無效的角色映射。")
-                continue
-            db.execute(
-                """INSERT OR REPLACE INTO role_mappings
-                   (group_id, guild_id, role_name, role_id)
-                   VALUES (?, ?, ?, ?)""",
-                (group_id, guild_id, common_name, role_id),
-            )
         db.commit()
+
+    # Role mappings
+    for group_id in configured_group_ids_by_name.values():
+        db.execute("DELETE FROM role_mappings WHERE group_id = ?", (group_id,))
+
+    default_group_name = next(iter(configured_group_ids_by_name), None) if len(configured_group_ids_by_name) == 1 else None
+    for mapping in relay_cfg.get("role_mappings", []):
+        group_name = str(mapping.get("group_name") or default_group_name or "").strip()
+        common_name = str(mapping.get("common_name", "")).strip()
+        guild_id = str(mapping.get("guild_id", "")).strip()
+        role_id = str(mapping.get("role_id", "")).strip()
+        group_id = configured_group_ids_by_name.get(group_name)
+        if not group_id:
+            sync_errors.append(f"⚠️ 角色映射指定了不存在或未同步的群組「{group_name}」。")
+            continue
+        if not common_name or not guild_id or not role_id:
+            sync_errors.append(f"⚠️ 群組「{group_name}」有無效的角色映射。")
+            continue
+        db.execute(
+            """INSERT OR REPLACE INTO role_mappings
+               (group_id, guild_id, role_name, role_id)
+               VALUES (?, ?, ?, ?)""",
+            (group_id, guild_id, common_name, role_id),
+        )
+    db.commit()
 
     # Clean removed channels / groups
     if configured_channel_ids:

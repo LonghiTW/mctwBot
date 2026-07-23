@@ -203,17 +203,21 @@ Scheduler 類功能的細項設定（需在 profile 開啟 `scheduler`）：
 ```json
 "role_mappings": [
   {
+    "group_name": "main",
     "guild_id": "333333333333333333",
     "role_id": "444444444444444444",
     "common_name": "K30"
   },
   {
+    "group_name": "main",
     "guild_id": "555555555555555555",
     "role_id": "666666666666666666",
     "common_name": "K30"
   }
 ]
 ```
+
+`role_mappings` 放在 `relay` 下，與 `groups` 同層。若只有一個 relay group，`group_name` 可省略；多 group 時請明確指定。
 
 ## 權限需求
 
