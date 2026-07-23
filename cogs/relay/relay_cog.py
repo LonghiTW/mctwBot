@@ -32,6 +32,7 @@ log = LogManager
 _MAX_USERNAME_LENGTH = 80
 _DISCORD_MSG_LIMIT = 2000
 _NO_MENTIONS = {"parse": []}
+_MENTION_BREAK = "\u200b"
 
 # Only relay these message types — filter out system messages that cause echo loops
 _RELAY_MESSAGE_TYPES = frozenset({
@@ -337,17 +338,18 @@ class RelayCog(commands.Cog):
             try:
                 cfg_id = configured_channel_id_for_stored_channel(db, row["relayed_channel_id"])
                 link_info = db.fetchone(
-                    "SELECT webhook_url FROM linked_channels WHERE channel_id = ?", (cfg_id,)
+                    "SELECT webhook_url, guild_id FROM linked_channels WHERE channel_id = ?", (cfg_id,)
                 )
                 if not link_info or not link_info["webhook_url"]:
                     continue
+                target_guild = self.bot.get_guild(int(link_info["guild_id"]))
                 wh = discord.Webhook.from_url(
                     link_info["webhook_url"],
                     session=self.bot.http._HTTPClient__session,
                 )
                 thread = webhook_thread_for_stored_channel(db, row["relayed_channel_id"])
                 edit_kwargs = {
-                    "content": final_content,
+                    "content": self._render_non_ping_mentions(final_content, message, target_guild),
                     "embeds": payload_embeds,
                     "allowed_mentions": discord.AllowedMentions.none(),
                 }
@@ -613,7 +615,7 @@ class RelayCog(commands.Cog):
                 else:
                     has_unmapped_roles = True
 
-        final_content = target_content
+        final_content = self._render_non_ping_mentions(target_content, original, target_guild)
         content_no_mentions = re.sub(r"<@!?&?#?(\d+)>", "", final_content).strip()
         if not content_no_mentions and has_unmapped_roles:
             final_content = "*(Unmapped role in original. Admin can map it or enable auto-sync.)*"
@@ -703,6 +705,41 @@ class RelayCog(commands.Cog):
             **thread_route,
         }
         await relay_queue.add(target["webhook_url"], payload, meta)
+
+    def _render_non_ping_mentions(
+        self,
+        content: str,
+        message: Message,
+        target_guild: discord.Guild | None = None,
+    ) -> str:
+        if not content:
+            return content
+
+        users = {str(user.id): user.display_name for user in message.mentions}
+        roles = {str(role.id): role.name for role in getattr(message, "role_mentions", [])}
+        channels = {str(channel.id): channel.name for channel in message.channel_mentions}
+        if target_guild:
+            roles.update({str(role.id): role.name for role in target_guild.roles})
+            channels.update({str(channel.id): channel.name for channel in target_guild.channels})
+
+        def user_label(match: re.Match) -> str:
+            user_id = match.group(1)
+            return f"@{users.get(user_id, user_id)}"
+
+        def role_label(match: re.Match) -> str:
+            role_id = match.group(1)
+            return f"@{roles.get(role_id, role_id)}"
+
+        def channel_label(match: re.Match) -> str:
+            channel_id = match.group(1)
+            return f"#{channels.get(channel_id, channel_id)}"
+
+        rendered = re.sub(r"<@!?(\d+)>", user_label, content)
+        rendered = re.sub(r"<@&(\d+)>", role_label, rendered)
+        rendered = re.sub(r"<#(\d+)>", channel_label, rendered)
+        rendered = rendered.replace("@everyone", f"@{_MENTION_BREAK}everyone")
+        rendered = rendered.replace("@here", f"@{_MENTION_BREAK}here")
+        return rendered
 
     def _track_filter_violation(
         self, db: DatabaseManager, message: Message,
