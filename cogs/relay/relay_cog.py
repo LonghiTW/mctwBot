@@ -569,9 +569,9 @@ class RelayCog(commands.Cog):
                 )
         # Role mention mapping
         target_content = original.content or ""
+        target_guild = self.bot.get_guild(int(target["guild_id"]))
         role_mentions = re.findall(r"<@&(\d+)>", target_content)
         if role_mentions:
-            target_guild = self.bot.get_guild(int(target["guild_id"]))
             can_manage = target_guild and target_guild.me and target_guild.me.guild_permissions.manage_roles
             allow_auto = False
             if can_manage:
