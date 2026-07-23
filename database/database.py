@@ -4,6 +4,8 @@ import sqlite3
 import threading
 from pathlib import Path
 
+from config import DATABASE_PATH
+
 MIGRATIONS = [
     {
         "version": 1,
@@ -120,9 +122,14 @@ class DatabaseManager:
         self._initialized = True
 
         if db_path is None:
-            db_path = str(Path.cwd() / "database.db")
+            db_path = DATABASE_PATH
 
-        self._db_path = db_path
+        db_file = Path(db_path)
+        if not db_file.is_absolute():
+            db_file = Path.cwd() / db_file
+        db_file.parent.mkdir(parents=True, exist_ok=True)
+
+        self._db_path = str(db_file)
         self._local = threading.local()
         self._run_migrations()
 

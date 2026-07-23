@@ -41,6 +41,7 @@ python run.py
 | `BOT_TOKEN_OPS` | `ops` bot profile 的 Token（範例，可自行改名） |
 | `RELAY_QUEUE_DELAY_MS` | Webhook 發送間隔毫秒（預設 600） |
 | `CONFIG_PATH` | 設定檔路徑（預設 `config.json`） |
+| `DATABASE_PATH` | SQLite 資料庫路徑（預設 `data/database.db`） |
 
 ### `config.json` — 功能設定
 
@@ -240,6 +241,7 @@ Bot/
 ├── bot_profiles.py      ← 多 bot token profile 載入與驗證
 ├── config.py            ← 讀取 .env
 ├── config_sync.py       ← 讀取 config.json → SQLite
+├── data/                ← SQLite runtime 檔案（不進 git）
 ├── database/
 │   └── database.py      ← SQLite + migration
 ├── utils/

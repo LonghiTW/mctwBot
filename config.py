@@ -7,6 +7,7 @@ load_dotenv()
 DISCORD_TOKEN: str = os.getenv("DISCORD_TOKEN", "")
 RELAY_QUEUE_DELAY_MS: int = int(os.getenv("RELAY_QUEUE_DELAY_MS", "600"))
 CONFIG_PATH: str = os.getenv("CONFIG_PATH", "config.json")
+DATABASE_PATH: str = os.getenv("DATABASE_PATH", "data/database.db")
 
 
 def validate() -> None:
