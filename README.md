@@ -45,12 +45,24 @@ python run.py
 
 ### `config.json` — 功能設定
 
-#### `admin_user_ids`
+#### `notifications`
 
 接收管理員通知的 Discord 使用者 ID 陣列。通知會以私訊發送。
 
 ```json
-"admin_user_ids": ["123456789012345678"]
+"notifications": {
+  "admin_user_ids": ["123456789012345678"]
+}
+```
+
+#### `admin`
+
+允許使用 Admin 類指令的 Discord 使用者 ID 陣列。具備伺服器 `Administrator` 權限的成員也可以使用。
+
+```json
+"admin": {
+  "user_ids": ["123456789012345678"]
+}
 ```
 
 #### `bots`
@@ -101,7 +113,7 @@ Commands 類功能目前提供基本指令：
 
 #### `admin`
 
-Admin 類功能目前提供 JSON 訊息控制，只有 `admin_user_ids` 內的使用者可以使用：
+Admin 類功能目前提供 JSON 訊息控制，只有 `admin.user_ids` 內的使用者或伺服器 Administrator 可以使用：
 
 ```text
 !msg send #channel {"content":"文字內容"}
@@ -240,6 +252,7 @@ Bot/
 ├── run.py               ← python run.py 啟動腳本
 ├── bot_profiles.py      ← 多 bot token profile 載入與驗證
 ├── config.py            ← 讀取 .env
+├── config_validator.py  ← 啟動早期驗證 config.json
 ├── config_sync.py       ← 讀取 config.json → SQLite
 ├── data/                ← SQLite runtime 檔案（不進 git）
 ├── database/
@@ -253,6 +266,7 @@ Bot/
     ├── keywords/        ← 關鍵字被動回應
     ├── scheduler/       ← 定時任務
     ├── moderation/      ← 頻道管理
+    ├── admin/           ← 管理員指令
     └── commands/        ← 基本指令
 ```
 
@@ -260,4 +274,5 @@ Bot/
 
 - 討論串和論壇貼文的中繼需要 bot 有「管理討論串」權限
 - Relay 功能只能在一個 bot profile 啟用
+- 啟動時會先驗證 `config.json`，設定格式錯誤會直接中止啟動
 - 設定檔修改後需重啟 bot 才會生效

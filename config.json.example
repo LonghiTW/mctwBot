@@ -1,5 +1,11 @@
 {
-  "admin_user_ids": [],
+  "notifications": {
+    "admin_user_ids": []
+  },
+
+  "admin": {
+    "user_ids": []
+  },
 
   "bots": [
     {

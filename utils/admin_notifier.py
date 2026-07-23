@@ -19,7 +19,8 @@ def load_admin_user_ids() -> list[str]:
         return []
     try:
         with path.open("r", encoding="utf-8") as f:
-            return json.load(f).get("admin_user_ids", [])
+            config = json.load(f)
+            return config.get("notifications", {}).get("admin_user_ids", [])
     except (json.JSONDecodeError, IOError):
         return []
 

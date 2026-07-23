@@ -6,6 +6,7 @@ import discord
 from discord.ext import commands
 
 from bot_profiles import BotProfile, load_bot_profiles, validate_bot_profiles
+from config_validator import validate_config
 from config_sync import load_config
 from database import DatabaseManager
 from utils.log_manager import LogManager
@@ -13,6 +14,26 @@ from utils.admin_notifier import notify_admins
 from cogs.relay.queue import relay_queue
 
 log = LogManager
+
+FEATURE_EXTENSIONS = {
+    "relay": ("cogs.relay.relay_cog",),
+    "commands": ("cogs.commands.ping",),
+    "admin": ("cogs.admin.message_control",),
+}
+
+CONFIGURED_FEATURE_EXTENSIONS = {
+    "keywords": {
+        "hello": "cogs.keywords.hello",
+        "birthday": "cogs.keywords.birthday",
+    },
+    "scheduler": {
+        "friday_night": "cogs.scheduler.friday_night",
+        "sunday_night": "cogs.scheduler.sunday_night",
+    },
+    "moderation": {
+        "welcome_cleaner": "cogs.moderation.welcome_cleaner",
+    },
+}
 
 
 def create_intents() -> discord.Intents:
@@ -57,43 +78,25 @@ def register_events(bot: commands.Bot, profile: BotProfile) -> None:
 async def load_extensions(bot: commands.Bot, profile: BotProfile, config: dict) -> None:
     features = profile.features
 
-    if features.get("relay", False):
-        await bot.load_extension("cogs.relay.relay_cog")
-        log.info("MAIN", f"[{profile.id}] Loaded relay")
+    for feature, extensions in FEATURE_EXTENSIONS.items():
+        if features.get(feature, False):
+            for extension in extensions:
+                await bot.load_extension(extension)
+            log.info("MAIN", f"[{profile.id}] Loaded {feature}")
 
-    if features.get("keywords", False):
-        keywords = config.get("keywords", {})
-        if keywords.get("hello", {}).get("enabled", True):
-            await bot.load_extension("cogs.keywords.hello")
-        if keywords.get("birthday", {}).get("enabled", True):
-            await bot.load_extension("cogs.keywords.birthday")
-        log.info("MAIN", f"[{profile.id}] Loaded keywords")
-
-    if features.get("scheduler", False):
-        scheduler = config.get("scheduler", {})
-        if scheduler.get("friday_night", {}).get("enabled", True):
-            await bot.load_extension("cogs.scheduler.friday_night")
-        if scheduler.get("sunday_night", {}).get("enabled", True):
-            await bot.load_extension("cogs.scheduler.sunday_night")
-        log.info("MAIN", f"[{profile.id}] Loaded scheduler")
-
-    if features.get("moderation", False):
-        moderation = config.get("moderation", {})
-        if moderation.get("welcome_cleaner", {}).get("enabled", True):
-            await bot.load_extension("cogs.moderation.welcome_cleaner")
-        log.info("MAIN", f"[{profile.id}] Loaded moderation")
-
-    if features.get("commands", False):
-        await bot.load_extension("cogs.commands.ping")
-        log.info("MAIN", f"[{profile.id}] Loaded commands")
-
-    if features.get("admin", False):
-        await bot.load_extension("cogs.admin.message_control")
-        log.info("MAIN", f"[{profile.id}] Loaded admin")
+    for feature, extensions in CONFIGURED_FEATURE_EXTENSIONS.items():
+        if not features.get(feature, False):
+            continue
+        feature_config = config.get(feature, {})
+        for name, extension in extensions.items():
+            if feature_config.get(name, {}).get("enabled", True):
+                await bot.load_extension(extension)
+        log.info("MAIN", f"[{profile.id}] Loaded {feature}")
 
 
 async def main():
     config = load_config()
+    validate_config(config)
     profiles = load_bot_profiles(config)
     validate_bot_profiles(profiles)
 

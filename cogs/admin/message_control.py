@@ -15,7 +15,7 @@ class MessageControl(commands.Cog):
         self.bot = bot
 
     async def cog_check(self, ctx: commands.Context) -> bool:
-        admin_ids = {int(uid) for uid in load_config().get("admin_user_ids", [])}
+        admin_ids = {int(uid) for uid in load_config().get("admin", {}).get("user_ids", [])}
         if ctx.author.id in admin_ids:
             return True
         if isinstance(ctx.author, discord.Member) and ctx.author.guild_permissions.administrator:
