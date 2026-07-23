@@ -8,6 +8,7 @@ import discord
 from discord.ext import commands
 
 from app.config_sync import load_config
+from database import DatabaseManager
 
 
 class MessageControl(commands.Cog):
@@ -26,6 +27,42 @@ class MessageControl(commands.Cog):
     @commands.group(invoke_without_command=True)
     async def msg(self, ctx: commands.Context):
         await ctx.send("Usage: `!msg send`, `!msg edit`, `!msg delete`, `!msg source`")
+
+    @commands.command(name="announce")
+    async def announce(self, ctx: commands.Context, group_name: str, *, payload: str):
+        data = self._message_from_json(payload)
+        channels = self._group_channel_ids(group_name)
+        if not channels:
+            await ctx.send(f"Relay group not found or has no channels: `{group_name}`")
+            return
+
+        sent = 0
+        skipped = 0
+        failed: list[str] = []
+        for channel_id in channels:
+            channel = self.bot.get_channel(int(channel_id))
+            if channel is None:
+                try:
+                    channel = await self.bot.fetch_channel(int(channel_id))
+                except discord.DiscordException as exc:
+                    failed.append(f"{channel_id}: {exc}")
+                    continue
+
+            if not isinstance(channel, discord.TextChannel):
+                skipped += 1
+                continue
+
+            try:
+                await channel.send(**data)
+                sent += 1
+            except discord.DiscordException as exc:
+                failed.append(f"{channel_id}: {exc}")
+
+        summary = f"Announcement sent to {sent} channel(s); skipped {skipped} non-text channel(s)."
+        if failed:
+            details = "\n".join(failed[:5])
+            summary += f"\nFailed {len(failed)} channel(s):\n```\n{details}\n```"
+        await ctx.send(summary)
 
     @msg.command(name="send")
     async def msg_send(self, ctx: commands.Context, channel: discord.TextChannel, *, payload: str):
@@ -96,6 +133,18 @@ class MessageControl(commands.Cog):
             except discord.Forbidden:
                 continue
         return None
+
+    def _group_channel_ids(self, group_name: str) -> list[str]:
+        db = DatabaseManager()
+        rows = db.fetchall(
+            """SELECT lc.channel_id
+               FROM linked_channels lc
+               JOIN relay_groups rg ON rg.group_id = lc.group_id
+               WHERE rg.group_name = ?
+               ORDER BY lc.channel_id""",
+            (group_name,),
+        )
+        return [str(row["channel_id"]) for row in rows]
 
     def _message_from_json(self, payload: str) -> dict:
         try:
