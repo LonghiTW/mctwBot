@@ -187,46 +187,64 @@ class RelayCog(commands.Cog):
     async def on_message_delete(self, message: Message):
         if not message.guild:
             return
-        db = DatabaseManager()
-
-        # Case 1: deleted message is a relayed webhook → reverse delete
         if message.webhook_id:
-            link = db.fetchone(
-                """SELECT original_message_id, original_channel_id
-                   FROM relayed_messages WHERE relayed_message_id = ?""",
-                (str(message.id),),
-            )
-            if not link:
-                return
-            orig_cfg = configured_channel_id_for_stored_channel(db, link["original_channel_id"])
-            src = db.fetchone(
-                "SELECT allow_reverse_delete FROM linked_channels WHERE channel_id = ?",
-                (orig_cfg,),
-            )
-            if not src or not src["allow_reverse_delete"]:
-                return
-            try:
-                ch = await self.bot.fetch_channel(int(link["original_channel_id"]))
-                orig = await ch.fetch_message(int(link["original_message_id"]))
-                await orig.delete()
-            except Exception:
-                pass
+            await self._sync_reverse_delete(str(message.id))
             return
 
-        # Case 2: deleted message is an original → forward delete
+        await self._sync_forward_delete(
+            str(message.id),
+            linked_channel_id_for_message(message),
+        )
+
+    @commands.Cog.listener()
+    async def on_raw_message_delete(self, payload: discord.RawMessageDeleteEvent):
+        if not payload.guild_id:
+            return
+        message_id = str(payload.message_id)
+        channel_id = str(payload.channel_id)
+        if await self._sync_reverse_delete(message_id):
+            return
+        await self._sync_forward_delete(message_id, channel_id)
+
+    async def _sync_reverse_delete(self, relayed_message_id: str) -> bool:
+        db = DatabaseManager()
+        link = db.fetchone(
+            """SELECT original_message_id, original_channel_id
+               FROM relayed_messages WHERE relayed_message_id = ?""",
+            (relayed_message_id,),
+        )
+        if not link:
+            return False
+        orig_cfg = configured_channel_id_for_stored_channel(db, link["original_channel_id"])
+        src = db.fetchone(
+            "SELECT allow_reverse_delete FROM linked_channels WHERE channel_id = ?",
+            (orig_cfg,),
+        )
+        if not src or not src["allow_reverse_delete"]:
+            return True
+        try:
+            ch = await self.bot.fetch_channel(int(link["original_channel_id"]))
+            orig = await ch.fetch_message(int(link["original_message_id"]))
+            await orig.delete()
+        except Exception:
+            pass
+        return True
+
+    async def _sync_forward_delete(self, original_message_id: str, channel_id: str) -> bool:
+        db = DatabaseManager()
         src = db.fetchone(
             "SELECT allow_forward_delete FROM linked_channels WHERE channel_id = ?",
-            (linked_channel_id_for_message(message),),
+            (configured_channel_id_for_stored_channel(db, channel_id),),
         )
         if not src or not src["allow_forward_delete"]:
-            return
+            return False
 
         relayed = db.fetchall(
             "SELECT relayed_message_id, relayed_channel_id FROM relayed_messages WHERE original_message_id = ?",
-            (str(message.id),),
+            (original_message_id,),
         )
         if not relayed:
-            return
+            return False
 
         for row in relayed:
             try:
@@ -252,9 +270,10 @@ class RelayCog(commands.Cog):
 
         db.execute(
             "DELETE FROM relayed_messages WHERE original_message_id = ?",
-            (str(message.id),),
+            (original_message_id,),
         )
         db.commit()
+        return True
 
     # ------------------------------------------------------------------
     # on_message_edit — edit sync
