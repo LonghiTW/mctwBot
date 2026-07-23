@@ -31,6 +31,7 @@ log = LogManager
 
 _MAX_USERNAME_LENGTH = 80
 _DISCORD_MSG_LIMIT = 2000
+_NO_MENTIONS = {"parse": []}
 
 # Only relay these message types — filter out system messages that cause echo loops
 _RELAY_MESSAGE_TYPES = frozenset({
@@ -348,7 +349,7 @@ class RelayCog(commands.Cog):
                 edit_kwargs = {
                     "content": final_content,
                     "embeds": payload_embeds,
-                    "allowed_mentions": discord.AllowedMentions(roles=True, users=True),
+                    "allowed_mentions": discord.AllowedMentions.none(),
                 }
                 if thread:
                     edit_kwargs["thread"] = thread
@@ -520,7 +521,6 @@ class RelayCog(commands.Cog):
         exec_id: str, thread_route: dict,
     ):
         reply_embed = None
-        reply_ping = ""
         final_content = filtered_content
         has_unmapped_roles = False
 
@@ -565,9 +565,6 @@ class RelayCog(commands.Cog):
                 reply_embed.set_author(
                     name=f"Replying to {ra}", url=link, icon_url=replied.author.display_avatar.url,
                 )
-                if replied.author.id not in [u.id for u in original.mentions]:
-                    reply_ping = f"<@{replied.author.id}> "
-
         # Role mention mapping
         target_content = original.content or ""
         role_mentions = re.findall(r"<@&(\d+)>", target_content)
@@ -621,7 +618,7 @@ class RelayCog(commands.Cog):
         if not content_no_mentions and has_unmapped_roles:
             final_content = "*(Unmapped role in original. Admin can map it or enable auto-sync.)*"
 
-        payload_content = reply_ping + final_content
+        payload_content = final_content
 
         # Attachments — append direct URLs to content (Discord auto-embeds them)
         attachment_urls: list[str] = []
@@ -690,7 +687,7 @@ class RelayCog(commands.Cog):
             "username": username,
             "avatar_url": avatar_url,
             "embeds": [e.to_dict() if hasattr(e, "to_dict") else e for e in payload_embeds],
-            "allowed_mentions": {"parse": ["roles", "users"]},
+            "allowed_mentions": _NO_MENTIONS,
         }
         if original.stickers:
             s = original.stickers[0]
