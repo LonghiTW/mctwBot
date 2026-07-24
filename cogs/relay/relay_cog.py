@@ -88,15 +88,6 @@ class RelayCog(commands.Cog):
         if message.webhook_id and message.application_id == self.bot.user.id:
             return
 
-        # Auto-join threads so future messages in it are received
-        if isinstance(message.channel, discord.Thread):
-            try:
-                if message.channel.me is None:
-                    await message.channel.join()
-                    log.info("THREAD", f"Joined thread {message.channel.id} via on_message")
-            except Exception:
-                pass
-
         db = DatabaseManager()
         source_channel_id = linked_channel_id_for_message(message)
         source = db.fetchone(
@@ -106,6 +97,16 @@ class RelayCog(commands.Cog):
         )
         if not source:
             return
+
+        # Auto-join threads so future messages in it are received
+        if isinstance(message.channel, discord.Thread):
+            try:
+                if message.channel.me is None:
+                    await message.channel.join()
+                    log.info("THREAD", f"Joined thread {message.channel.id} via on_message")
+            except Exception:
+                pass
+
         if not source["process_bot_messages"] and (message.author.bot or message.webhook_id):
             return
 
