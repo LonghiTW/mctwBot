@@ -722,14 +722,6 @@ class RelayCog(commands.Cog):
         payload_content, payload_embeds = await self._resolve_klipy_urls(payload_content, payload_embeds)
         payload_content, payload_embeds = await self._resolve_custom_emojis(payload_content, payload_embeds)
         payload_content = self._append_attachment_previews(payload_content, payload_embeds, original.attachments)
-
-        payload = {
-            "content": payload_content,
-            "username": username,
-            "avatar_url": avatar_url,
-            "embeds": [e.to_dict() if hasattr(e, "to_dict") else e for e in payload_embeds],
-            "allowed_mentions": _NO_MENTIONS,
-        }
         if original.stickers:
             for s in original.stickers:
                 if len(payload_embeds) >= _MAX_EMBEDS:
@@ -739,6 +731,14 @@ class RelayCog(commands.Cog):
                 payload_embeds.append(embed)
             if not payload_content.strip():
                 payload_content = "\u200B"
+
+        payload = {
+            "content": payload_content,
+            "username": username,
+            "avatar_url": avatar_url,
+            "embeds": [e.to_dict() if hasattr(e, "to_dict") else e for e in payload_embeds],
+            "allowed_mentions": _NO_MENTIONS,
+        }
 
         meta = {
             "original_msg_id": str(original.id),
