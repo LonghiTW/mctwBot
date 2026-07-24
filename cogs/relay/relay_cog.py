@@ -245,13 +245,18 @@ class RelayCog(commands.Cog):
         if not relayed:
             return False
 
+        deleted = 0
+        failed = 0
         for row in relayed:
+            relayed_message_id = str(row["relayed_message_id"])
             try:
                 cfg_id = configured_channel_id_for_stored_channel(db, row["relayed_channel_id"])
                 link = db.fetchone(
                     "SELECT webhook_url FROM linked_channels WHERE channel_id = ?", (cfg_id,)
                 )
                 if not link or not link["webhook_url"]:
+                    failed += 1
+                    log.warn("DEL-FWD", f"Missing webhook for relayed channel {row['relayed_channel_id']} (cfg {cfg_id})")
                     continue
                 wh = discord.Webhook.from_url(
                     link["webhook_url"],
@@ -259,20 +264,28 @@ class RelayCog(commands.Cog):
                 )
                 thread = webhook_thread_for_stored_channel(db, row["relayed_channel_id"])
                 if thread:
-                    await wh.delete_message(int(row["relayed_message_id"]), thread=thread)
+                    await wh.delete_message(int(relayed_message_id), thread=thread)
                 else:
-                    await wh.delete_message(int(row["relayed_message_id"]))
+                    await wh.delete_message(int(relayed_message_id))
+                deleted += 1
+                self._delete_relay_record(db, original_message_id, relayed_message_id)
             except discord.NotFound:
-                pass
+                deleted += 1
+                self._delete_relay_record(db, original_message_id, relayed_message_id)
             except Exception as exc:
-                log.warn("DEL-FWD", f"Delete failed {row['relayed_message_id']}: {exc}")
+                failed += 1
+                log.warn("DEL-FWD", f"Delete failed {relayed_message_id} in {row['relayed_channel_id']}: {exc}")
 
+        log.info("DEL-FWD", f"Deleted {deleted}/{len(relayed)} relayed copies for {original_message_id}; failed={failed}")
+        return True
+
+    def _delete_relay_record(self, db: DatabaseManager, original_message_id: str, relayed_message_id: str) -> None:
         db.execute(
-            "DELETE FROM relayed_messages WHERE original_message_id = ?",
-            (original_message_id,),
+            """DELETE FROM relayed_messages
+               WHERE original_message_id = ? AND relayed_message_id = ?""",
+            (original_message_id, relayed_message_id),
         )
         db.commit()
-        return True
 
     # ------------------------------------------------------------------
     # on_message_edit — edit sync
