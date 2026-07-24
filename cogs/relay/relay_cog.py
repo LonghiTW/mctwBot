@@ -361,6 +361,7 @@ class RelayCog(commands.Cog):
                 for field in emb.fields:
                     clean.add_field(name=field.name, value=field.value, inline=field.inline)
             payload_embeds.append(clean)
+        final_content = self._strip_embed_urls_from_content(final_content, message.embeds)
         final_content = self._append_attachment_previews(final_content, payload_embeds, message.attachments)
 
         relayed = db.fetchall(
@@ -701,6 +702,7 @@ class RelayCog(commands.Cog):
                 for f in emb.fields:
                     clean.add_field(name=f.name, value=f.value, inline=f.inline)
             payload_embeds.append(clean)
+        payload_content = self._strip_embed_urls_from_content(payload_content, original.embeds)
         payload_content = self._append_attachment_previews(payload_content, payload_embeds, original.attachments)
 
         payload = {
@@ -724,6 +726,24 @@ class RelayCog(commands.Cog):
             **thread_route,
         }
         await relay_queue.add(target["webhook_url"], payload, meta)
+
+    def _strip_embed_urls_from_content(self, content: str, embeds: list) -> str:
+        """Remove bare URLs from content that are already represented as rich embeds."""
+        embed_urls: set[str] = set()
+        for emb in embeds:
+            if emb.url:
+                embed_urls.add(emb.url.rstrip("/"))
+            if emb.image and emb.image.url:
+                embed_urls.add(emb.image.url.rstrip("/"))
+            if emb.thumbnail and emb.thumbnail.url:
+                embed_urls.add(emb.thumbnail.url.rstrip("/"))
+        if not embed_urls:
+            return content
+        for url in sorted(embed_urls, key=len, reverse=True):
+            escaped = re.escape(url)
+            content = re.sub(rf"\s*{escaped}\s*", " ", content).strip()
+            content = re.sub(r"\s+", " ", content)
+        return content
 
     def _append_attachment_previews(self, content: str, embeds: list, attachments) -> str:
         overflow: list[str] = []
