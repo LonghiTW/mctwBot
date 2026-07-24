@@ -36,7 +36,7 @@ _MAX_EMBEDS = 10
 _NO_MENTIONS = {"parse": []}
 
 # Regex to detect Klipy GIF URLs that Discord didn't auto-embed
-_KLiPY_RE = re.compile(r'https?://(?:www\.)?klipy\.com/gifs/\S+', re.IGNORECASE)
+_KLiPY_RE = re.compile(r'https?://(?:www\\.)?klipy\\.com/gifs/\\S+', re.IGNORECASE)
 
 # Regex to match custom emoji from other servers (Nitro)
 _CUSTOM_EMOJI_RE = re.compile(r'<(a?):(\w+):(\d+)>')
