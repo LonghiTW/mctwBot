@@ -829,6 +829,28 @@ class RelayCog(commands.Cog):
                             if m:
                                 gif_url = m.group(1)
                         if gif_url and len(new_embeds) < _MAX_EMBEDS:
+                            # Klipy sometimes serves og:image as .mp4 — Discord
+                            # can't auto-play MP4 in an embed image field.
+                            # Try to find a static image version instead.
+                            if gif_url.lower().endswith('.mp4'):
+                                found = False
+                                for ext in ('.gif', '.png', '.webp'):
+                                    test_url = re.sub(r'\.mp4$', ext, gif_url, flags=re.IGNORECASE)
+                                    try:
+                                        async with session.head(
+                                            test_url,
+                                            timeout=aiohttp.ClientTimeout(total=3),
+                                        ) as tresp:
+                                            if tresp.status == 200:
+                                                gif_url = test_url
+                                                found = True
+                                                break
+                                    except Exception:
+                                        continue
+                                if not found:
+                                    # No static version — put clickable link back in content
+                                    content += f"\n{clean_url}"
+                                    continue
                             embed = Embed(color=0x2B2D31)
                             embed.set_image(url=gif_url)
                             new_embeds.append(embed)
