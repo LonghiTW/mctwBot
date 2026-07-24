@@ -731,8 +731,13 @@ class RelayCog(commands.Cog):
             "allowed_mentions": _NO_MENTIONS,
         }
         if original.stickers:
-            s = original.stickers[0]
-            payload["content"] += f"\n[Sticker: {s.name}]({s.url})"
+            for s in original.stickers:
+                if len(payload_embeds) >= _MAX_EMBEDS:
+                    break
+                embed = Embed(color=0x2B2D31)
+                embed.set_image(url=s.url)
+                embed.set_footer(text=f"Sticker: {s.name}")
+                payload_embeds.append(embed)
 
         meta = {
             "original_msg_id": str(original.id),
