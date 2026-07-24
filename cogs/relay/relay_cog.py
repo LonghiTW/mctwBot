@@ -8,6 +8,7 @@ import re
 import secrets
 from datetime import datetime
 
+import aiohttp
 import discord
 from discord import Message, Embed, TextChannel
 from discord.ext import commands
@@ -33,6 +34,9 @@ _MAX_USERNAME_LENGTH = 80
 _DISCORD_MSG_LIMIT = 2000
 _MAX_EMBEDS = 10
 _NO_MENTIONS = {"parse": []}
+
+# Regex to detect Klipy GIF URLs that Discord didn't auto-embed
+_KLiPY_RE = re.compile(r'https?://(?:www\\.)?klipy\\.com/gifs/\\S+', re.IGNORECASE)
 
 # Only relay these message types — filter out system messages that cause echo loops
 _RELAY_MESSAGE_TYPES = frozenset({
@@ -369,6 +373,7 @@ class RelayCog(commands.Cog):
                     clean.add_field(name=field.name, value=field.value, inline=field.inline)
             payload_embeds.append(clean)
         final_content = self._strip_embed_urls_from_content(final_content, message.embeds)
+        final_content, payload_embeds = await self._resolve_klipy_urls(final_content, payload_embeds)
         final_content = self._append_attachment_previews(final_content, payload_embeds, message.attachments)
 
         relayed = db.fetchall(
@@ -710,6 +715,7 @@ class RelayCog(commands.Cog):
                     clean.add_field(name=f.name, value=f.value, inline=f.inline)
             payload_embeds.append(clean)
         payload_content = self._strip_embed_urls_from_content(payload_content, original.embeds)
+        payload_content, payload_embeds = await self._resolve_klipy_urls(payload_content, payload_embeds)
         payload_content = self._append_attachment_previews(payload_content, payload_embeds, original.attachments)
 
         payload = {
@@ -770,6 +776,67 @@ class RelayCog(commands.Cog):
         if overflow:
             content += f"\n*(Note: {len(overflow)} file(s) too large: {', '.join(overflow)})*"
         return content
+
+    async def _resolve_klipy_urls(self, content: str, embeds: list) -> tuple[str, list]:
+        """Find Klipy GIF URLs in content, fetch the actual GIF, add as embeds.
+
+        Discord's GIF picker sometimes sends Klipy links without an embed.
+        This fetches the og:image from the Klipy page so we can embed it.
+        """
+        urls = _KLiPY_RE.findall(content)
+        if not urls:
+            return content, embeds
+
+        # Build set of already-embedded image URLs to avoid dupes
+        existing: set[str] = set()
+        for e in embeds:
+            img = getattr(e, "image", None)
+            if img and img.url:
+                existing.add(img.url.rstrip("/"))
+
+        new_embeds = list(embeds)
+        async with aiohttp.ClientSession() as session:
+            for url in urls:
+                clean_url = url.rstrip("/")
+                if clean_url in existing:
+                    continue
+                try:
+                    async with session.get(
+                        url, timeout=aiohttp.ClientTimeout(total=5)
+                    ) as resp:
+                        if resp.status != 200:
+                            continue
+                        html = await resp.text()
+                        # Try standard og:image
+                        gif_url = None
+                        m = re.search(
+                            r'<meta\\s+property="og:image"\\s+content="([^"]+)"',
+                            html, re.IGNORECASE,
+                        )
+                        if m:
+                            gif_url = m.group(1)
+                        else:
+                            # Try reversed attribute order
+                            m = re.search(
+                                r'<meta\\s+content="([^"]+)"\\s+property="og:image"',
+                                html, re.IGNORECASE,
+                            )
+                            if m:
+                                gif_url = m.group(1)
+                        if gif_url and len(new_embeds) < _MAX_EMBEDS:
+                            embed = Embed(color=0x2B2D31)
+                            embed.set_image(url=gif_url)
+                            new_embeds.append(embed)
+                            existing.add(gif_url.rstrip("/"))
+                except Exception:
+                    pass
+
+        # Strip Klipy URLs from content
+        for url in urls:
+            content = content.replace(url, "").strip()
+        content = re.sub(r"\\s+", " ", content).strip()
+
+        return content, new_embeds
 
     def _is_image_attachment(self, attachment) -> bool:
         content_type = getattr(attachment, "content_type", None) or ""
