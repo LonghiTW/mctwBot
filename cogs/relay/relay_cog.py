@@ -820,7 +820,7 @@ class RelayCog(commands.Cog):
                         # Try standard og:image
                         gif_url = None
                         m = re.search(
-                            r'<meta\\s+property="og:image"\\s+content="([^"]+)"',
+                            r'<meta\s+property="og:image"\s+content="([^"]+)"',
                             html, re.IGNORECASE,
                         )
                         if m:
@@ -828,7 +828,7 @@ class RelayCog(commands.Cog):
                         else:
                             # Try reversed attribute order
                             m = re.search(
-                                r'<meta\\s+content="([^"]+)"\\s+property="og:image"',
+                                r'<meta\s+content="([^"]+)"\s+property="og:image"',
                                 html, re.IGNORECASE,
                             )
                             if m:
@@ -866,7 +866,7 @@ class RelayCog(commands.Cog):
         # Strip Klipy URLs from content
         for url in urls:
             content = content.replace(url, "").strip()
-        content = re.sub(r"\\s+", " ", content).strip()
+        content = re.sub(r"\s+", " ", content).strip()
 
         return content, new_embeds
 
@@ -900,7 +900,7 @@ class RelayCog(commands.Cog):
 
         # Strip all emoji codes from content
         content = _CUSTOM_EMOJI_RE.sub("", content).strip()
-        content = re.sub(r"\\s+", " ", content).strip()
+        content = re.sub(r"\s+", " ", content).strip()
 
         return content, new_embeds
 
