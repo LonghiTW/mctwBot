@@ -805,10 +805,12 @@ class RelayCog(commands.Cog):
                 existing.add(img.url.rstrip("/"))
 
         new_embeds = list(embeds)
+        resolved: set[str] = set()
         async with aiohttp.ClientSession() as session:
             for url in urls:
                 clean_url = url.rstrip("/")
                 if clean_url in existing:
+                    resolved.add(clean_url)
                     continue
                 try:
                     async with session.get(
@@ -853,19 +855,21 @@ class RelayCog(commands.Cog):
                                     except Exception:
                                         continue
                                 if not found:
-                                    # No static version — put clickable link back in content
-                                    content += f"\n{clean_url}"
+                                    # No static version — keep original URL in content
                                     continue
                             embed = Embed(color=0x2B2D31)
                             embed.set_image(url=gif_url)
                             new_embeds.append(embed)
                             existing.add(gif_url.rstrip("/"))
+                            resolved.add(clean_url)
                 except Exception:
                     pass
 
-        # Strip Klipy URLs from content
+        # Only strip Klipy URLs that were successfully resolved
         for url in urls:
-            content = content.replace(url, "").strip()
+            clean_url = url.rstrip("/")
+            if clean_url in resolved:
+                content = content.replace(url, "").strip()
         content = re.sub(r"\s+", " ", content).strip()
 
         return content, new_embeds
