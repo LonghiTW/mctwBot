@@ -157,6 +157,31 @@ class RelayQueue:
 
                 log.info("QUEUE-SEND", f"Delivered to {target_channel_id} (msg {relayed_id})", exec_id)
 
+                # Post-send cancel check: if original was marked deleted while
+                # this webhook was in-flight, immediately delete what we just sent.
+                if relayed_id and meta.get("original_msg_id", "") in self._cancelled:
+                    log.info(
+                        "QUEUE-CANCEL",
+                        f"Original {meta['original_msg_id']} deleted during send, deleting {relayed_id}",
+                        exec_id,
+                    )
+                    try:
+                        delete_url = f"{wh_url}/messages/{relayed_id}"
+                        delete_params: dict[str, str] = {}
+                        if meta.get("target_thread_id"):
+                            delete_params["thread_id"] = meta["target_thread_id"]
+                        async with self._session.delete(
+                            delete_url, params=delete_params, raise_for_status=False
+                        ) as del_resp:
+                            if del_resp.status not in (204, 404):
+                                log.warn(
+                                    "QUEUE-CANCEL",
+                                    f"Delete returned {del_resp.status}",
+                                    exec_id,
+                                )
+                    except Exception as e:
+                        log.warn("QUEUE-CANCEL", f"Failed to delete {relayed_id}: {e}", exec_id)
+
         except (aiohttp.ClientError, asyncio.TimeoutError) as net_err:
             if attempt < self._max_retries:
                 log.warn("QUEUE-RETRY", f"Attempt {attempt+1}/{self._max_retries}: {net_err}", exec_id)

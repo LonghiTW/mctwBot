@@ -48,6 +48,7 @@ class RelayCog(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
         self.webhook_manager = WebhookManager()
+        self._recently_deleted: set[str] = set()
 
     # ------------------------------------------------------------------
     # on_ready — sync config and prune DB
@@ -232,6 +233,12 @@ class RelayCog(commands.Cog):
         return True
 
     async def _sync_forward_delete(self, original_message_id: str, channel_id: str) -> bool:
+        # Dedup: skip if we already processed this deletion
+        if original_message_id in self._recently_deleted:
+            return True
+        self._recently_deleted.add(original_message_id)
+        asyncio.get_running_loop().call_later(5, self._recently_deleted.discard, original_message_id)
+
         # Cancel any queued-but-not-yet-sent webhook payloads for this message
         relay_queue.cancel(original_message_id)
 
