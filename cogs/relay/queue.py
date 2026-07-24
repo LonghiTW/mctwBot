@@ -18,6 +18,11 @@ class RelayQueue:
         self._max_retries = max_retries
         self._task: asyncio.Task | None = None
         self._session: aiohttp.ClientSession | None = None
+        self._cancelled: set[str] = set()
+
+    def cancel(self, original_msg_id: str) -> None:
+        """Mark an original message as cancelled (deleted) so queued sends are skipped."""
+        self._cancelled.add(original_msg_id)
 
     async def start(self):
         if self._session is None:
@@ -43,6 +48,11 @@ class RelayQueue:
     async def _processor(self):
         while True:
             item = await self._queue.get()
+            original_msg_id = item.get("meta", {}).get("original_msg_id", "")
+            if original_msg_id and original_msg_id in self._cancelled:
+                self._cancelled.discard(original_msg_id)
+                log.info("QUEUE-SKIP", f"Original {original_msg_id} deleted, skipping queued send")
+                continue
             try:
                 await self._send(item)
             except Exception as exc:

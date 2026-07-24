@@ -232,6 +232,9 @@ class RelayCog(commands.Cog):
         return True
 
     async def _sync_forward_delete(self, original_message_id: str, channel_id: str) -> bool:
+        # Cancel any queued-but-not-yet-sent webhook payloads for this message
+        relay_queue.cancel(original_message_id)
+
         db = DatabaseManager()
         src = db.fetchone(
             "SELECT allow_forward_delete FROM linked_channels WHERE channel_id = ?",
