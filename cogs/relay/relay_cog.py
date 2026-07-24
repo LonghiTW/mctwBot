@@ -727,7 +727,7 @@ class RelayCog(commands.Cog):
                 if len(payload_embeds) >= _MAX_EMBEDS:
                     break
                 embed = Embed(color=0x2B2D31)
-                embed.set_image(url=s.url)
+                embed.set_image(url=self._sticker_image_url(s.url))
                 payload_embeds.append(embed)
             if not payload_content.strip():
                 payload_content = "\u200B"
@@ -787,6 +787,10 @@ class RelayCog(commands.Cog):
         if overflow:
             content += f"\n*(Note: {len(overflow)} file(s) too large: {', '.join(overflow)})*"
         return content
+
+    def _sticker_image_url(self, url: str) -> str:
+        separator = "&" if "?" in url else "?"
+        return f"{url}{separator}size=160"
 
     async def _resolve_klipy_urls(self, content: str, embeds: list) -> tuple[str, list]:
         """Find Klipy GIF URLs in content, fetch the actual GIF, add as embeds.
