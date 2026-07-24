@@ -790,7 +790,7 @@ class RelayCog(commands.Cog):
 
     def _sticker_image_url(self, url: str) -> str:
         separator = "&" if "?" in url else "?"
-        return f"{url}{separator}format=webp&quality=lossless&width=480&height=275"
+        return f"{url}{separator}format=webp&quality=lossless&width=240"
 
     async def _resolve_klipy_urls(self, content: str, embeds: list) -> tuple[str, list]:
         """Find Klipy GIF URLs in content, fetch the actual GIF, add as embeds.
