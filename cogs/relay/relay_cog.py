@@ -697,6 +697,13 @@ class RelayCog(commands.Cog):
         if len(payload_content) > _DISCORD_MSG_LIMIT:
             payload_content = payload_content[:_DISCORD_MSG_LIMIT - 50] + "...(truncated)"
 
+        # Append jump link for tracking (keep room for it)
+        jump_link = f"https://discord.com/channels/{original.guild.id}/{original.channel.id}/{original.id}"
+        jump_suffix = f"\n-# 🔗 [原始訊息]({jump_link})"
+        if len(payload_content) + len(jump_suffix) > _DISCORD_MSG_LIMIT:
+            payload_content = payload_content[: _DISCORD_MSG_LIMIT - len(jump_suffix) - 10] + "..."
+        payload_content += jump_suffix
+
         if reply_embed:
             payload_embeds.append(reply_embed)
 
