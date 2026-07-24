@@ -38,6 +38,9 @@ _NO_MENTIONS = {"parse": []}
 # Regex to detect Klipy GIF URLs that Discord didn't auto-embed
 _KLiPY_RE = re.compile(r'https?://(?:www\\.)?klipy\\.com/gifs/\\S+', re.IGNORECASE)
 
+# Regex to match custom emoji from other servers (Nitro)
+_CUSTOM_EMOJI_RE = re.compile(r'<(a?):(\\w+):(\\d+)>')
+
 # Only relay these message types — filter out system messages that cause echo loops
 _RELAY_MESSAGE_TYPES = frozenset({
     discord.MessageType.default,
@@ -374,6 +377,7 @@ class RelayCog(commands.Cog):
             payload_embeds.append(clean)
         final_content = self._strip_embed_urls_from_content(final_content, message.embeds)
         final_content, payload_embeds = await self._resolve_klipy_urls(final_content, payload_embeds)
+        final_content, payload_embeds = await self._resolve_custom_emojis(final_content, payload_embeds)
         final_content = self._append_attachment_previews(final_content, payload_embeds, message.attachments)
 
         relayed = db.fetchall(
@@ -716,6 +720,7 @@ class RelayCog(commands.Cog):
             payload_embeds.append(clean)
         payload_content = self._strip_embed_urls_from_content(payload_content, original.embeds)
         payload_content, payload_embeds = await self._resolve_klipy_urls(payload_content, payload_embeds)
+        payload_content, payload_embeds = await self._resolve_custom_emojis(payload_content, payload_embeds)
         payload_content = self._append_attachment_previews(payload_content, payload_embeds, original.attachments)
 
         payload = {
@@ -834,6 +839,40 @@ class RelayCog(commands.Cog):
         # Strip Klipy URLs from content
         for url in urls:
             content = content.replace(url, "").strip()
+        content = re.sub(r"\\s+", " ", content).strip()
+
+        return content, new_embeds
+
+    async def _resolve_custom_emojis(self, content: str, embeds: list) -> tuple[str, list]:
+        """Replace cross-server custom emoji (<:name:id> / <a:name:id>)
+        with embed images sourced from Discord CDN."""
+        matches = list(_CUSTOM_EMOJI_RE.finditer(content))
+        if not matches:
+            return content, embeds
+
+        existing: set[str] = set()
+        for e in embeds:
+            img = getattr(e, "image", None)
+            if img and img.url:
+                existing.add(img.url.rstrip("/"))
+
+        new_embeds = list(embeds)
+        for m in matches:
+            animated = m.group(1) == "a"
+            emoji_id = m.group(3)
+            ext = "gif" if animated else "png"
+            cdn_url = f"https://cdn.discordapp.com/emojis/{emoji_id}.{ext}"
+            if cdn_url.rstrip("/") in existing:
+                continue
+            if len(new_embeds) >= _MAX_EMBEDS:
+                break
+            embed = Embed(color=0x2B2D31)
+            embed.set_image(url=cdn_url)
+            new_embeds.append(embed)
+            existing.add(cdn_url.rstrip("/"))
+
+        # Strip all emoji codes from content
+        content = _CUSTOM_EMOJI_RE.sub("", content).strip()
         content = re.sub(r"\\s+", " ", content).strip()
 
         return content, new_embeds
