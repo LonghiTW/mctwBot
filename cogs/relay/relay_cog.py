@@ -31,6 +31,7 @@ log = LogManager
 
 _MAX_USERNAME_LENGTH = 80
 _DISCORD_MSG_LIMIT = 2000
+_MAX_EMBEDS = 10
 _NO_MENTIONS = {"parse": []}
 
 # Only relay these message types — filter out system messages that cause echo loops
@@ -334,10 +335,6 @@ class RelayCog(commands.Cog):
         if len(username) > _MAX_USERNAME_LENGTH:
             username = username[:_MAX_USERNAME_LENGTH - 3] + "..."
 
-        if message.attachments:
-            links = "\n".join(a.url for a in message.attachments)
-            if links not in final_content:
-                final_content += f"\n{links}"
         if len(final_content) > _DISCORD_MSG_LIMIT:
             final_content = final_content[:_DISCORD_MSG_LIMIT - 50] + "...(truncated)"
 
@@ -360,6 +357,7 @@ class RelayCog(commands.Cog):
                 for field in emb.fields:
                     clean.add_field(name=field.name, value=field.value, inline=field.inline)
             payload_embeds.append(clean)
+        final_content = self._append_attachment_previews(final_content, payload_embeds, message.attachments)
 
         relayed = db.fetchall(
             "SELECT relayed_message_id, relayed_channel_id FROM relayed_messages WHERE original_message_id = ?",
@@ -652,20 +650,6 @@ class RelayCog(commands.Cog):
 
         payload_content = final_content
 
-        # Attachments — append direct URLs to content (Discord auto-embeds them)
-        attachment_urls: list[str] = []
-        large_attachments: list[str] = []
-        for att in sorted(original.attachments, key=lambda a: a.size):
-            line = f"\n{att.url}"
-            if len(payload_content) + len(line) + sum(len(u) for u in attachment_urls) <= _DISCORD_MSG_LIMIT - 50:
-                attachment_urls.append(line)
-            else:
-                large_attachments.append(att.filename)
-        if attachment_urls:
-            payload_content += "".join(attachment_urls)
-        if large_attachments:
-            payload_content += f"\n*(Note: {len(large_attachments)} file(s) too large: {', '.join(large_attachments)})*"
-
         payload_embeds = []
         if original.message_snapshots:
             snap = original.message_snapshots[0]
@@ -713,6 +697,7 @@ class RelayCog(commands.Cog):
                 for f in emb.fields:
                     clean.add_field(name=f.name, value=f.value, inline=f.inline)
             payload_embeds.append(clean)
+        payload_content = self._append_attachment_previews(payload_content, payload_embeds, original.attachments)
 
         payload = {
             "content": payload_content,
@@ -735,6 +720,32 @@ class RelayCog(commands.Cog):
             **thread_route,
         }
         await relay_queue.add(target["webhook_url"], payload, meta)
+
+    def _append_attachment_previews(self, content: str, embeds: list, attachments) -> str:
+        overflow: list[str] = []
+        for att in sorted(attachments, key=lambda item: item.size):
+            if self._is_image_attachment(att) and len(embeds) < _MAX_EMBEDS:
+                embed = Embed(color=0x2B2D31)
+                embed.set_image(url=att.url)
+                embeds.append(embed)
+                continue
+
+            line = f"\n{att.url}"
+            if len(content) + len(line) <= _DISCORD_MSG_LIMIT - 50:
+                content += line
+            else:
+                overflow.append(att.filename)
+
+        if overflow:
+            content += f"\n*(Note: {len(overflow)} file(s) too large: {', '.join(overflow)})*"
+        return content
+
+    def _is_image_attachment(self, attachment) -> bool:
+        content_type = getattr(attachment, "content_type", None) or ""
+        if content_type.startswith("image/"):
+            return True
+        filename = getattr(attachment, "filename", "").lower()
+        return filename.endswith((".png", ".jpg", ".jpeg", ".gif", ".webp"))
 
     def _track_filter_violation(
         self, db: DatabaseManager, message: Message,
