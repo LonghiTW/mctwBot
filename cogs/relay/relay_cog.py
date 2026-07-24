@@ -725,10 +725,9 @@ class RelayCog(commands.Cog):
         if original.stickers:
             attachment_urls = {att.url.rstrip("/") for att in original.attachments}
             for s in original.stickers:
-                sticker_url = self._sticker_image_url(s.url)
                 if s.url.rstrip("/") in attachment_urls:
                     continue
-                line = f"\n{sticker_url}"
+                line = f"\n{s.url}"
                 if len(payload_content) + len(line) <= _DISCORD_MSG_LIMIT - 50:
                     payload_content += line
 
@@ -787,10 +786,6 @@ class RelayCog(commands.Cog):
         if overflow:
             content += f"\n*(Note: {len(overflow)} file(s) too large: {', '.join(overflow)})*"
         return content
-
-    def _sticker_image_url(self, url: str) -> str:
-        separator = "&" if "?" in url else "?"
-        return f"{url}{separator}format=webp&quality=lossless&width=240"
 
     async def _resolve_klipy_urls(self, content: str, embeds: list) -> tuple[str, list]:
         """Find Klipy GIF URLs in content, fetch the actual GIF, add as embeds.
