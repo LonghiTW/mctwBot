@@ -1,24 +1,27 @@
-"""Async webhook relay queue — serialises sends to avoid 429 rate limits."""
+"""Async webhook relay queue — parallel workers to avoid head-of-line blocking."""
 import asyncio
 
 import aiohttp
 
 from database import DatabaseManager
 from utils.log_manager import LogManager
+from app.config import RELAY_QUEUE_DELAY_MS, RELAY_QUEUE_WORKERS
 
 log = LogManager
 
 
 class RelayQueue:
-    """FIFO queue that sends webhook payloads one-at-a-time with a delay."""
+    """Queue with parallel workers — per-webhook delay avoids 429s."""
 
-    def __init__(self, delay_ms: int = 600, max_retries: int = 3):
+    def __init__(self, delay_ms: int = 600, max_retries: int = 3, workers: int = 4):
         self._queue: asyncio.Queue = asyncio.Queue()
         self._delay = delay_ms / 1000
         self._max_retries = max_retries
-        self._task: asyncio.Task | None = None
+        self._worker_count = workers
+        self._tasks: list[asyncio.Task] = []
         self._session: aiohttp.ClientSession | None = None
         self._cancelled: set[str] = set()
+        self._last_send: dict[str, float] = {}  # webhook_url -> last send timestamp
 
     def cancel(self, original_msg_id: str) -> None:
         """Mark an original message as cancelled (deleted) so queued sends are skipped."""
@@ -27,12 +30,15 @@ class RelayQueue:
     async def start(self):
         if self._session is None:
             self._session = aiohttp.ClientSession()
-        self._task = asyncio.create_task(self._processor())
+        self._tasks = [
+            asyncio.create_task(self._processor(f"worker-{i}"))
+            for i in range(self._worker_count)
+        ]
 
     async def stop(self):
-        if self._task:
-            self._task.cancel()
-            self._task = None
+        for t in self._tasks:
+            t.cancel()
+        self._tasks = []
         if self._session:
             await self._session.close()
             self._session = None
@@ -45,7 +51,7 @@ class RelayQueue:
             "attempt": 1,
         })
 
-    async def _processor(self):
+    async def _processor(self, worker_name: str = ""):
         while True:
             item = await self._queue.get()
             original_msg_id = item.get("meta", {}).get("original_msg_id", "")
@@ -54,10 +60,15 @@ class RelayQueue:
                 log.info("QUEUE-SKIP", f"Original {original_msg_id} deleted, skipping queued send")
                 continue
             try:
+                wh_url: str = item["webhook_url"]
+                now = asyncio.get_running_loop().time()
+                since_last = now - self._last_send.get(wh_url, 0)
+                if since_last < self._delay:
+                    await asyncio.sleep(self._delay - since_last)
                 await self._send(item)
+                self._last_send[wh_url] = asyncio.get_running_loop().time()
             except Exception as exc:
                 log.error("QUEUE", f"Critical: {exc}", exc_info=exc)
-            await asyncio.sleep(self._delay)
 
     async def _send(self, item: dict):
         wh_url: str = item["webhook_url"]
@@ -191,4 +202,4 @@ class RelayQueue:
 
 
 # Module-level singleton
-relay_queue = RelayQueue()
+relay_queue = RelayQueue(delay_ms=RELAY_QUEUE_DELAY_MS, workers=RELAY_QUEUE_WORKERS)
