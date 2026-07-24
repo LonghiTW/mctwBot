@@ -737,6 +737,8 @@ class RelayCog(commands.Cog):
                 embed = Embed(color=0x2B2D31)
                 embed.set_image(url=s.url)
                 payload_embeds.append(embed)
+            if not payload_content.strip():
+                payload_content = "\u200B"
 
         meta = {
             "original_msg_id": str(original.id),
