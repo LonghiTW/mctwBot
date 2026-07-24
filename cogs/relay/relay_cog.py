@@ -727,7 +727,7 @@ class RelayCog(commands.Cog):
                 if len(payload_embeds) >= _MAX_EMBEDS:
                     break
                 embed = Embed(color=0x2B2D31)
-                embed.set_image(url=self._sticker_image_url(s.url))
+                embed.set_thumbnail(url=self._sticker_image_url(s.url))
                 payload_embeds.append(embed)
             if not payload_content.strip():
                 payload_content = "\u200B"
