@@ -723,14 +723,14 @@ class RelayCog(commands.Cog):
         payload_content, payload_embeds = await self._resolve_custom_emojis(payload_content, payload_embeds)
         payload_content = self._append_attachment_previews(payload_content, payload_embeds, original.attachments)
         if original.stickers:
+            attachment_urls = {att.url.rstrip("/") for att in original.attachments}
             for s in original.stickers:
-                if len(payload_embeds) >= _MAX_EMBEDS:
-                    break
-                embed = Embed(color=0x2B2D31)
-                embed.set_thumbnail(url=self._sticker_image_url(s.url))
-                payload_embeds.append(embed)
-            if not payload_content.strip():
-                payload_content = "\u200B"
+                sticker_url = self._sticker_image_url(s.url)
+                if s.url.rstrip("/") in attachment_urls:
+                    continue
+                line = f"\n{sticker_url}"
+                if len(payload_content) + len(line) <= _DISCORD_MSG_LIMIT - 50:
+                    payload_content += line
 
         payload = {
             "content": payload_content,
@@ -790,7 +790,7 @@ class RelayCog(commands.Cog):
 
     def _sticker_image_url(self, url: str) -> str:
         separator = "&" if "?" in url else "?"
-        return f"{url}{separator}size=160"
+        return f"{url}{separator}format=webp&quality=lossless&width=480&height=275"
 
     async def _resolve_klipy_urls(self, content: str, embeds: list) -> tuple[str, list]:
         """Find Klipy GIF URLs in content, fetch the actual GIF, add as embeds.
