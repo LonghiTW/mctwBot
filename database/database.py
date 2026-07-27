@@ -101,6 +101,23 @@ MIGRATIONS = [
             ON relay_threads(group_id, target_thread_id);
         """,
     },
+    {
+        "version": 3,
+        "description": "Emoji cache for cross-server custom emoji relay",
+        "sql": """
+        CREATE TABLE IF NOT EXISTS relay_emoji_cache (
+            source_emoji_id TEXT PRIMARY KEY,
+            cache_guild_id TEXT NOT NULL,
+            cached_emoji_id TEXT NOT NULL,
+            cached_name TEXT NOT NULL,
+            animated INTEGER NOT NULL,
+            source_url TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            last_used_at TEXT NOT NULL,
+            use_count INTEGER NOT NULL DEFAULT 0
+        );
+        """,
+    },
 ]
 
 
