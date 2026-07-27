@@ -1117,6 +1117,11 @@ class RelayCog(commands.Cog):
                 gname = r["group_name"]
                 new_by_group.setdefault(gname, set()).add(r["channel_id"])
 
+            # Build guild lookup for channel links
+            channel_guild: dict[str, str] = {}
+            for r in old_rows + new_rows:
+                channel_guild[r["channel_id"]] = r["guild_id"]
+
             # Re-apply prune_days
             self._prune_old_messages()
 
@@ -1141,9 +1146,11 @@ class RelayCog(commands.Cog):
                 # --- Notify kept channels about additions & removals ---
                 msg_parts = [f"**{gname} 頻道更新**"]
                 for cid in sorted(added):
-                    msg_parts.append(f"  ➕ 新增 <#{cid}>")
+                    gid = channel_guild.get(cid, "?")
+                    msg_parts.append(f"  ➕ 新增 https://discord.com/channels/{gid}/{cid}")
                 for cid in sorted(removed):
-                    msg_parts.append(f"  ➖ 移除 <#{cid}>")
+                    gid = channel_guild.get(cid, "?")
+                    msg_parts.append(f"  ➖ 移除 https://discord.com/channels/{gid}/{cid}")
                 notify_text = "\n".join(msg_parts)
 
                 for cid in kept:
@@ -1161,7 +1168,7 @@ class RelayCog(commands.Cog):
 
                 # --- Welcome new channels ---
                 for cid in sorted(added):
-                    other_in_group = [f"<#{oc}>" for oc in sorted(new_set) if oc != cid]
+                    other_in_group = [f"https://discord.com/channels/{channel_guild.get(oc, '?')}/{oc}" for oc in sorted(new_set) if oc != cid]
                     other_text = "、".join(other_in_group) if other_in_group else "無"
                     welcome = (
                         f"👋 此頻道已加入麥塊聯盟的群組 **{gname}**。\n"
@@ -1194,9 +1201,11 @@ class RelayCog(commands.Cog):
                     continue
                 summary += f"**{gname}**\n"
                 for cid in sorted(added):
-                    summary += f"  ➕ <#{cid}>\n"
+                    gid = channel_guild.get(cid, "?")
+                    summary += f"  ➕ https://discord.com/channels/{gid}/{cid}\n"
                 for cid in sorted(removed):
-                    summary += f"  ➖ <#{cid}>\n"
+                    gid = channel_guild.get(cid, "?")
+                    summary += f"  ➖ https://discord.com/channels/{gid}/{cid}\n"
                 summary += "\n"
 
             await ctx.send(summary[:1900])
@@ -1242,7 +1251,7 @@ class RelayCog(commands.Cog):
             for i, ch in enumerate(channels):
                 prefix = "  └" if i == len(channels) - 1 else "  ├"
                 d = "🔄" if ch["direction"] == "BOTH" else ("📤" if ch["direction"] == "SEND_ONLY" else "📥")
-                lines.append(f"{prefix} {d} <#{ch['channel_id']}>")
+                lines.append(f"{prefix} {d} https://discord.com/channels/{ch['guild_id']}/{ch['channel_id']}")
 
             lines.append("")
 
