@@ -774,12 +774,6 @@ class RelayCog(commands.Cog):
     def _append_attachment_previews(self, content: str, embeds: list, attachments) -> str:
         overflow: list[str] = []
         for att in sorted(attachments, key=lambda item: item.size):
-            if self._is_image_attachment(att) and len(embeds) < _MAX_EMBEDS:
-                embed = Embed(color=0x2B2D31)
-                embed.set_image(url=att.url)
-                embeds.append(embed)
-                continue
-
             line = f"\n{att.url}"
             if len(content) + len(line) <= _DISCORD_MSG_LIMIT - 50:
                 content += line
@@ -994,13 +988,6 @@ class RelayCog(commands.Cog):
                 content = content[:start] + new_text + content[end:]
 
         return content, embeds
-
-    def _is_image_attachment(self, attachment) -> bool:
-        content_type = getattr(attachment, "content_type", None) or ""
-        if content_type.startswith("image/"):
-            return True
-        filename = getattr(attachment, "filename", "").lower()
-        return filename.endswith((".png", ".jpg", ".jpeg", ".gif", ".webp"))
 
     def _track_filter_violation(
         self, db: DatabaseManager, message: Message,
