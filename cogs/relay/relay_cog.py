@@ -744,8 +744,9 @@ class RelayCog(commands.Cog):
                                     continue
                     except Exception:
                         pass
-                    # Fallback: put clean URL in content
-                    line = f"\n{rf['url']}"
+                    # Fallback: put clean URL (no signature params) in content
+                    clean_url = rf["url"].split("?")[0]
+                    line = f"\n{clean_url}"
                     if len(payload_content) + len(line) <= _DISCORD_MSG_LIMIT - 50:
                         payload_content += line
         if original.stickers:
@@ -809,7 +810,7 @@ class RelayCog(commands.Cog):
             if self._is_image_attachment(att) and len(image_files) < 10:
                 image_files.append({
                     "filename": att.filename,
-                    "url": att.url.split("?")[0],
+                    "url": att.url,  # full signed URL for download
                     "content_type": att.content_type or "image/png",
                 })
                 continue
