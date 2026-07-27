@@ -16,7 +16,7 @@ from cogs.relay.queue import relay_queue
 log = LogManager
 
 FEATURE_EXTENSIONS = {
-    "relay": ("cogs.relay.relay_cog", "cogs.moderation.guild_tracker"),
+    "relay": ("cogs.relay.relay_cog", "cogs.relay.guild_tracker"),
     "commands": ("cogs.commands.ping",),
     "admin": ("cogs.admin.message_control",),
 }
