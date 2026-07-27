@@ -774,13 +774,8 @@ class RelayCog(commands.Cog):
     def _append_attachment_previews(self, content: str, embeds: list, attachments) -> str:
         overflow: list[str] = []
         for att in sorted(attachments, key=lambda item: item.size):
-            if self._is_image_attachment(att) and len(embeds) < _MAX_EMBEDS:
-                embed = Embed(color=0x2B2D31)
-                embed.set_image(url=att.url)
-                embeds.append(embed)
-                continue
-
-            line = f"\n{att.url}"
+            clean_url = att.url.split("?")[0]  # Strip CDN signature params (?ex=...&is=...&hm=...)
+            line = f"\n{clean_url}"
             if len(content) + len(line) <= _DISCORD_MSG_LIMIT - 50:
                 content += line
             else:
