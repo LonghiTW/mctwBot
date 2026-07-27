@@ -1083,6 +1083,16 @@ class RelayCog(commands.Cog):
         admin_ids = {int(uid) for uid in load_config().get("admin", {}).get("user_ids", [])}
         return member.id in admin_ids
 
+    def _can_view_relaylist(self, author: discord.User | discord.Member | None) -> bool:
+        """relaylist 權限：config admin 或 guild administrator/manage_guild。"""
+        if author is None:
+            return False
+        if self._is_config_admin(author):
+            return True
+        if isinstance(author, discord.Member) and author.guild:
+            return author.guild_permissions.manage_guild or author.guild_permissions.administrator
+        return False
+
     @commands.command(name="reload")
     async def reload_config(self, ctx: commands.Context):
         """重新載入 config.json 設定，不須重啟機器人。"""
@@ -1215,8 +1225,8 @@ class RelayCog(commands.Cog):
     @commands.command(name="relaylist")
     async def list_relays(self, ctx: commands.Context):
         """列出所有中繼群組與所屬頻道／伺服器。"""
-        if not self._is_config_admin(ctx.author):
-            await ctx.send("❌ 只有 admin.user_ids 中的管理員才能使用此指令。")
+        if not self._can_view_relaylist(ctx.author):
+            await ctx.send("❌ 你沒有權限檢視中繼列表。僅限 admin.user_ids 或擁有「管理伺服器」權限者使用。")
             return
 
         # Read hidden flags from config.json
