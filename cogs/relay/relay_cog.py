@@ -1093,6 +1093,87 @@ class RelayCog(commands.Cog):
             return author.guild_permissions.manage_guild or author.guild_permissions.administrator
         return False
 
+    # ------------------------------------------------------------------
+    # on_bot_reload — react to config reload (diff + notifications)
+    # ------------------------------------------------------------------
+    @commands.Cog.listener()
+    async def on_bot_reload(
+        self,
+        old_rows: list[dict],
+        new_rows: list[dict],
+    ):
+        """Called after !reload syncs config. Computes diff and notifies channels."""
+        old_by_group: dict[str, set[str]] = {}
+        for r in old_rows:
+            old_by_group.setdefault(r["group_name"], set()).add(r["channel_id"])
+
+        new_by_group: dict[str, set[str]] = {}
+        for r in new_rows:
+            new_by_group.setdefault(r["group_name"], set()).add(r["channel_id"])
+
+        channel_guild: dict[str, str] = {}
+        for r in old_rows + new_rows:
+            channel_guild[r["channel_id"]] = r["guild_id"]
+
+        all_group_names = set(old_by_group) | set(new_by_group)
+
+        for gname in sorted(all_group_names):
+            old_set = old_by_group.get(gname, set())
+            new_set = new_by_group.get(gname, set())
+
+            added = new_set - old_set
+            removed = old_set - new_set
+            kept = old_set & new_set
+
+            if not added and not removed:
+                continue
+
+            # Notify kept channels about additions & removals
+            msg_parts = [f"**{gname} 頻道更新**"]
+            for cid in sorted(added):
+                gid = channel_guild.get(cid, "?")
+                msg_parts.append(f"  ➕ 新增 https://discord.com/channels/{gid}/{cid}")
+            for cid in sorted(removed):
+                gid = channel_guild.get(cid, "?")
+                msg_parts.append(f"  ➖ 移除 https://discord.com/channels/{gid}/{cid}")
+            notify_text = "\n".join(msg_parts)
+
+            for cid in kept:
+                ch = self.bot.get_channel(int(cid))
+                if ch is None:
+                    try:
+                        ch = await self.bot.fetch_channel(int(cid))
+                    except Exception:
+                        continue
+                if hasattr(ch, "send"):
+                    try:
+                        await ch.send(notify_text)
+                    except Exception:
+                        pass
+
+            # Welcome new channels
+            for cid in sorted(added):
+                others = [
+                    f"https://discord.com/channels/{channel_guild.get(oc, '?')}/{oc}"
+                    for oc in sorted(new_set) if oc != cid
+                ]
+                other_text = "、".join(others) if others else "無"
+                welcome = (
+                    f"👋 此頻道已加入麥塊聯盟的群組 **{gname}**。\n"
+                    f"群組內其他頻道：{other_text}"
+                )
+                ch = self.bot.get_channel(int(cid))
+                if ch is None:
+                    try:
+                        ch = await self.bot.fetch_channel(int(cid))
+                    except Exception:
+                        continue
+                if hasattr(ch, "send"):
+                    try:
+                        await ch.send(welcome)
+                    except Exception:
+                        pass
+
     @commands.command(name="relaylist")
     async def list_relays(self, ctx: commands.Context):
         """列出所有中繼群組與所屬頻道／伺服器。"""
