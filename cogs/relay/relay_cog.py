@@ -378,7 +378,7 @@ class RelayCog(commands.Cog):
         final_content, payload_embeds = await self._resolve_klipy_urls(final_content, payload_embeds)
         final_content = self._strip_embed_urls_from_content(final_content, message.embeds)
         final_content, payload_embeds = await self._resolve_custom_emojis(final_content, payload_embeds)
-        final_content = self._append_attachment_previews(final_content, payload_embeds, message.attachments)
+        final_content, _ = self._append_attachment_previews(final_content, payload_embeds, message.attachments)
 
         relayed = db.fetchall(
             "SELECT relayed_message_id, relayed_channel_id FROM relayed_messages WHERE original_message_id = ?",
@@ -722,7 +722,32 @@ class RelayCog(commands.Cog):
         payload_content = self._strip_embed_urls_from_content(payload_content, original.embeds)
         target_guild = self.bot.get_guild(int(target["guild_id"]))
         payload_content, payload_embeds = await self._resolve_custom_emojis(payload_content, payload_embeds, target_guild)
-        payload_content = self._append_attachment_previews(payload_content, payload_embeds, original.attachments)
+        payload_content, relay_files = self._append_attachment_previews(payload_content, payload_embeds, original.attachments)
+
+        # Download images for multipart upload (grid layout), fallback to URL on failure
+        files_for_upload: list[dict] = []
+        if relay_files:
+            async with aiohttp.ClientSession() as dl_session:
+                for rf in relay_files:
+                    try:
+                        async with dl_session.get(
+                            rf["url"], timeout=aiohttp.ClientTimeout(total=10)
+                        ) as resp:
+                            if resp.status == 200:
+                                data = await resp.read()
+                                if len(data) < 8_000_000:  # Discord 8 MB limit
+                                    files_for_upload.append({
+                                        "filename": rf["filename"],
+                                        "data": data,
+                                        "content_type": rf["content_type"],
+                                    })
+                                    continue
+                    except Exception:
+                        pass
+                    # Fallback: put clean URL in content
+                    line = f"\n{rf['url']}"
+                    if len(payload_content) + len(line) <= _DISCORD_MSG_LIMIT - 50:
+                        payload_content += line
         if original.stickers:
             attachment_urls = {att.url.rstrip("/") for att in original.attachments}
             for s in original.stickers:
@@ -749,7 +774,7 @@ class RelayCog(commands.Cog):
             "group_id": target["group_id"],
             **thread_route,
         }
-        await relay_queue.add(target["webhook_url"], payload, meta)
+        await relay_queue.add(target["webhook_url"], payload, meta, files=files_for_upload)
 
     def _strip_embed_urls_from_content(self, content: str, embeds: list) -> str:
         """Remove bare URLs from content that are already represented as rich embeds."""
@@ -771,11 +796,25 @@ class RelayCog(commands.Cog):
             content = re.sub(r"\s+", " ", content)
         return content
 
-    def _append_attachment_previews(self, content: str, embeds: list, attachments) -> str:
+    def _append_attachment_previews(self, content: str, embeds: list, attachments) -> tuple[str, list]:
+        """Return (content, image_files).
+
+        Image attachments are returned as a list of download items for multipart
+        upload (grid layout). Non-image attachments and overflow are appended
+        as plain URLs in content.
+        """
+        image_files: list[dict] = []
         overflow: list[str] = []
         for att in sorted(attachments, key=lambda item: item.size):
-            clean_url = att.url.split("?")[0]  # Strip CDN signature params (?ex=...&is=...&hm=...)
-            line = f"\n{clean_url}"
+            if self._is_image_attachment(att) and len(image_files) < 10:
+                image_files.append({
+                    "filename": att.filename,
+                    "url": att.url.split("?")[0],
+                    "content_type": att.content_type or "image/png",
+                })
+                continue
+
+            line = f"\n{att.url.split('?')[0]}"
             if len(content) + len(line) <= _DISCORD_MSG_LIMIT - 50:
                 content += line
             else:
@@ -783,7 +822,7 @@ class RelayCog(commands.Cog):
 
         if overflow:
             content += f"\n*(Note: {len(overflow)} file(s) too large: {', '.join(overflow)})*"
-        return content
+        return content, image_files
 
     async def _resolve_klipy_urls(self, content: str, embeds: list) -> tuple[str, list]:
         """Find Klipy GIF URLs in content, fetch the actual GIF, add as embeds.

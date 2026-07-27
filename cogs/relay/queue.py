@@ -1,5 +1,6 @@
 """Async webhook relay queue — parallel workers to avoid head-of-line blocking."""
 import asyncio
+import json
 
 import aiohttp
 
@@ -43,12 +44,13 @@ class RelayQueue:
             await self._session.close()
             self._session = None
 
-    async def add(self, webhook_url: str, payload: dict, meta: dict):
+    async def add(self, webhook_url: str, payload: dict, meta: dict, files: list | None = None):
         await self._queue.put({
             "webhook_url": webhook_url,
             "payload": payload,
             "meta": meta,
             "attempt": 1,
+            "files": files or [],
         })
 
     async def _processor(self, worker_name: str = ""):
@@ -86,8 +88,24 @@ class RelayQueue:
                 payload = {**payload, "thread_name": meta["thread_name"]}
                 log.info("QUEUE", f"Posting with thread_name={meta['thread_name']!r}", exec_id)
 
+            files_list = item.get("files", [])
+            send_kwargs: dict = {}
+            if files_list:
+                form = aiohttp.FormData()
+                form.add_field("payload_json", json.dumps(payload))
+                for i, f in enumerate(files_list):
+                    form.add_field(
+                        f"files[{i}]",
+                        f["data"],
+                        filename=f["filename"],
+                        content_type=f.get("content_type", "application/octet-stream"),
+                    )
+                send_kwargs["data"] = form
+            else:
+                send_kwargs["json"] = payload
+
             async with self._session.post(
-                wh_url, json=payload, params=params, raise_for_status=False
+                wh_url, params=params, raise_for_status=False, **send_kwargs
             ) as resp:
                 if resp.status == 429:
                     retry_after = float(resp.headers.get("Retry-After", 5))
