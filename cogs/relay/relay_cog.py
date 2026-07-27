@@ -677,7 +677,15 @@ class RelayCog(commands.Cog):
         if original.message_snapshots:
             snap = original.message_snapshots[0]
             forward_text = snap.content or "*(No text)*"
-            payload_content += f"\n> ↱ Forwarded\n{forward_text}"
+            ref = original.reference
+            ref_guild_id = getattr(ref, "guild_id", None) or original.guild.id
+            ref_channel_id = getattr(ref, "channel_id", None)
+            ref_message_id = getattr(ref, "message_id", None)
+            if ref_channel_id and ref_message_id:
+                forward_url = f"https://discord.com/channels/{ref_guild_id}/{ref_channel_id}/{ref_message_id}"
+                payload_content += f"\n> ↱ Forwarded from {forward_url}\n{forward_text}"
+            else:
+                payload_content += f"\n> ↱ Forwarded\n{forward_text}"
 
             if snap.embeds:
                 payload_embeds.extend(snap.embeds)
