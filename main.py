@@ -16,7 +16,7 @@ from cogs.relay.queue import relay_queue
 log = LogManager
 
 FEATURE_EXTENSIONS = {
-    "relay": ("cogs.relay.relay_cog",),
+    "relay": ("cogs.relay.relay_cog", "cogs.moderation.guild_tracker"),
     "commands": ("cogs.commands.ping",),
     "admin": ("cogs.admin.message_control",),
 }
@@ -32,7 +32,6 @@ CONFIGURED_FEATURE_EXTENSIONS = {
     },
     "moderation": {
         "welcome_cleaner": "cogs.moderation.welcome_cleaner",
-        "guild_tracker": "cogs.moderation.guild_tracker",
     },
 }
 

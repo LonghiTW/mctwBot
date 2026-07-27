@@ -51,9 +51,6 @@
     "welcome_cleaner": {
       "enabled": true,
       "channels": []
-    },
-    "guild_tracker": {
-      "enabled": true
     }
   },
 
