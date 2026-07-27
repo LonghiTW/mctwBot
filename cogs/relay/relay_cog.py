@@ -1074,6 +1074,85 @@ class RelayCog(commands.Cog):
             f"**原因：** 觸發過濾器「{f['phrase']}」達上限（{threshold} 次）",
         )
 
+    # ------------------------------------------------------------------
+    # Admin commands
+    # ------------------------------------------------------------------
+    def _is_admin(self, member: discord.Member | None) -> bool:
+        if member is None:
+            return False
+        if member.guild_permissions.administrator:
+            return True
+        admin_ids = {int(uid) for uid in load_config().get("admin", {}).get("user_ids", [])}
+        return member.id in admin_ids
+
+    @commands.command(name="reload")
+    async def reload_config(self, ctx: commands.Context):
+        """重新載入 config.json 設定，不須重啟機器人。"""
+        if not self._is_admin(ctx.author):
+            await ctx.send("❌ 只有管理員才能使用此指令。")
+            return
+        try:
+            await sync_configured_relays(self.bot)
+            # Re-apply prune_days
+            self._prune_old_messages()
+            await ctx.send("✅ 設定已重新載入。")
+        except Exception as exc:
+            await ctx.send(f"❌ 載入失敗：{exc}")
+
+    @commands.command(name="relaylist")
+    async def list_relays(self, ctx: commands.Context):
+        """列出所有中繼群組與所屬頻道／伺服器。"""
+        if not self._is_admin(ctx.author):
+            await ctx.send("❌ 只有管理員才能使用此指令。")
+            return
+        db = DatabaseManager()
+        groups = db.fetchall("SELECT * FROM relay_groups ORDER BY group_name")
+        if not groups:
+            await ctx.send("目前沒有設定任何中繼群組。")
+            return
+
+        lines: list[str] = []
+        for g in groups:
+            channels = db.fetchall(
+                "SELECT * FROM linked_channels WHERE group_id = ? ORDER BY guild_id, channel_id",
+                (g["group_id"],),
+            )
+            guild = self.bot.get_guild(int(g["owner_guild_id"]))
+            guild_name = guild.name if guild else g["owner_guild_id"]
+            lines.append(f"**{g['group_name']}**（{guild_name}）")
+
+            if not channels:
+                lines.append("  └ *無頻道*")
+                continue
+
+            for i, ch in enumerate(channels):
+                prefix = "  └" if i == len(channels) - 1 else "  ├"
+                tg = self.bot.get_guild(int(ch["guild_id"]))
+                tg_name = tg.name if tg else ch["guild_id"]
+                label = f"#{ch['channel_id']}"
+                d = "🔄" if ch["direction"] == "BOTH" else ("📤" if ch["direction"] == "SEND_ONLY" else "📥")
+                lines.append(f"{prefix} {d} {tg_name} / {label}")
+
+            lines.append("")
+
+        # Split into chunks if too long
+        text = "\n".join(lines).strip()
+        if len(text) <= 1900:
+            await ctx.send(text)
+        else:
+            chunks = []
+            current = ""
+            for line in text.split("\n"):
+                if len(current) + len(line) + 1 > 1900:
+                    chunks.append(current)
+                    current = line
+                else:
+                    current += "\n" + line if current else line
+            if current:
+                chunks.append(current)
+            for chunk in chunks:
+                await ctx.send(chunk)
+
 
 async def setup(bot: commands.Bot):
     await bot.add_cog(RelayCog(bot))
