@@ -71,6 +71,7 @@
     "groups": [
       {
         "name": "main",
+        "hidden": false,
         "channels": [
           {
             "channel_id": "111111111111111111",
