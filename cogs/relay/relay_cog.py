@@ -1348,8 +1348,9 @@ class RelayCog(commands.Cog):
                 if add:
                     await msg.add_reaction(resolved)
                 else:
-                    user = discord.Object(id=payload.user_id)
-                    await msg.remove_reaction(resolved, user)
+                    # The reaction was added by the bot during add-sync,
+                    # so remove the bot's own reaction (not the user's).
+                    await msg.remove_reaction(resolved, discord.Object(id=self.bot.user.id))
             except (discord.NotFound, discord.Forbidden, discord.HTTPException) as exc:
                 log.warn("REACTION-SYNC", f"Failed to {'add' if add else 'remove'} reaction on {target_mid}: {exc}")
 
