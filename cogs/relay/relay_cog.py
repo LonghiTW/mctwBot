@@ -806,7 +806,7 @@ class RelayCog(commands.Cog):
         """
         image_files: list[dict] = []
         overflow: list[str] = []
-        for att in sorted(attachments, key=lambda item: item.size):
+        for att in attachments:
             if self._is_image_attachment(att) and len(image_files) < 10:
                 image_files.append({
                     "filename": att.filename,
