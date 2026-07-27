@@ -1077,19 +1077,17 @@ class RelayCog(commands.Cog):
     # ------------------------------------------------------------------
     # Admin commands
     # ------------------------------------------------------------------
-    def _is_admin(self, member: discord.Member | None) -> bool:
+    def _is_config_admin(self, member: discord.User | discord.Member | None) -> bool:
         if member is None:
             return False
-        if member.guild_permissions.administrator:
-            return True
         admin_ids = {int(uid) for uid in load_config().get("admin", {}).get("user_ids", [])}
         return member.id in admin_ids
 
     @commands.command(name="reload")
     async def reload_config(self, ctx: commands.Context):
         """重新載入 config.json 設定，不須重啟機器人。"""
-        if not self._is_admin(ctx.author):
-            await ctx.send("❌ 只有管理員才能使用此指令。")
+        if not self._is_config_admin(ctx.author):
+            await ctx.send("❌ 只有 admin.user_ids 中的管理員才能使用此指令。")
             return
         try:
             await sync_configured_relays(self.bot)
@@ -1102,8 +1100,8 @@ class RelayCog(commands.Cog):
     @commands.command(name="relaylist")
     async def list_relays(self, ctx: commands.Context):
         """列出所有中繼群組與所屬頻道／伺服器。"""
-        if not self._is_admin(ctx.author):
-            await ctx.send("❌ 只有管理員才能使用此指令。")
+        if not self._is_config_admin(ctx.author):
+            await ctx.send("❌ 只有 admin.user_ids 中的管理員才能使用此指令。")
             return
         db = DatabaseManager()
         groups = db.fetchall("SELECT * FROM relay_groups ORDER BY group_name")
