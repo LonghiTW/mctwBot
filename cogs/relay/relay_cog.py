@@ -36,7 +36,7 @@ _MAX_EMBEDS = 10
 _NO_MENTIONS = {"parse": []}
 
 # Regex to detect Klipy GIF URLs that Discord didn't auto-embed
-_KLiPY_RE = re.compile(r'https?://(?:www\\.)?klipy\\.com/gifs/\\S+', re.IGNORECASE)
+_KLiPY_RE = re.compile(r'https?://(?:www\.)?klipy\.com/gifs/\S+', re.IGNORECASE)
 
 # Regex to match custom emoji from other servers (Nitro)
 _CUSTOM_EMOJI_RE = re.compile(r'<(a?):(\w+):(\d+)>')
@@ -375,8 +375,8 @@ class RelayCog(commands.Cog):
                 for field in emb.fields:
                     clean.add_field(name=field.name, value=field.value, inline=field.inline)
             payload_embeds.append(clean)
-        final_content = self._strip_embed_urls_from_content(final_content, message.embeds)
         final_content, payload_embeds = await self._resolve_klipy_urls(final_content, payload_embeds)
+        final_content = self._strip_embed_urls_from_content(final_content, message.embeds)
         final_content, payload_embeds = await self._resolve_custom_emojis(final_content, payload_embeds)
         final_content = self._append_attachment_previews(final_content, payload_embeds, message.attachments)
 
@@ -718,8 +718,8 @@ class RelayCog(commands.Cog):
                 for f in emb.fields:
                     clean.add_field(name=f.name, value=f.value, inline=f.inline)
             payload_embeds.append(clean)
-        payload_content = self._strip_embed_urls_from_content(payload_content, original.embeds)
         payload_content, payload_embeds = await self._resolve_klipy_urls(payload_content, payload_embeds)
+        payload_content = self._strip_embed_urls_from_content(payload_content, original.embeds)
         payload_content, payload_embeds = await self._resolve_custom_emojis(payload_content, payload_embeds)
         payload_content = self._append_attachment_previews(payload_content, payload_embeds, original.attachments)
         if original.stickers:
@@ -763,6 +763,8 @@ class RelayCog(commands.Cog):
         if not embed_urls:
             return content
         for url in sorted(embed_urls, key=len, reverse=True):
+            if _KLiPY_RE.fullmatch(url):
+                continue
             escaped = re.escape(url)
             content = re.sub(rf"\s*{escaped}\s*", " ", content).strip()
             content = re.sub(r"\s+", " ", content)
