@@ -43,6 +43,7 @@ def create_intents() -> discord.Intents:
     intents.guilds = True
     intents.members = True
     intents.webhooks = True
+    intents.guild_reactions = True
     if hasattr(intents, "threads"):
         intents.threads = True
     return intents

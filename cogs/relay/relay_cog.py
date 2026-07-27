@@ -1139,7 +1139,7 @@ class RelayCog(commands.Cog):
                 kept = old_set & new_set
 
                 # --- Notify kept channels about additions & removals ---
-                msg_parts = [f"**中繼群組 {gname} 有變更**"]
+                msg_parts = [f"**{gname} 頻道更新**"]
                 for cid in sorted(added):
                     msg_parts.append(f"  ➕ 新增 <#{cid}>")
                 for cid in sorted(removed):
@@ -1164,7 +1164,7 @@ class RelayCog(commands.Cog):
                     other_in_group = [f"<#{oc}>" for oc in sorted(new_set) if oc != cid]
                     other_text = "、".join(other_in_group) if other_in_group else "無"
                     welcome = (
-                        f"👋 此頻道已加入中繼群組 **{gname}**。\n"
+                        f"👋 此頻道已加入麥塊聯盟的群組 **{gname}**。\n"
                         f"群組內其他頻道：{other_text}"
                     )
                     ch = self.bot.get_channel(int(cid))
@@ -1266,6 +1266,100 @@ class RelayCog(commands.Cog):
                 chunks.append(current)
             for chunk in chunks:
                 await ctx.send(chunk)
+
+    # ------------------------------------------------------------------
+    # on_raw_reaction_add / remove — sync reactions across relay channels
+    # ------------------------------------------------------------------
+    @commands.Cog.listener()
+    async def on_raw_reaction_add(self, payload: discord.RawReactionActionEvent):
+        """Sync a reaction added to a relayed message across all copies."""
+        if payload.user_id == self.bot.user.id:
+            return
+        await self._sync_reaction(payload, add=True)
+
+    @commands.Cog.listener()
+    async def on_raw_reaction_remove(self, payload: discord.RawReactionActionEvent):
+        """Sync a reaction removed from a relayed message across all copies."""
+        if payload.user_id == self.bot.user.id:
+            return
+        await self._sync_reaction(payload, add=False)
+
+    async def _sync_reaction(self, payload: discord.RawReactionActionEvent, add: bool):
+        """Core reaction sync: find all copies of the message and mirror the reaction."""
+        db = DatabaseManager()
+        message_id = str(payload.message_id)
+        channel_id = str(payload.channel_id)
+
+        # Case 1: This message is the original — find all relayed copies
+        copies = db.fetchall(
+            "SELECT relayed_message_id, relayed_channel_id FROM relayed_messages WHERE original_message_id = ?",
+            (message_id,),
+        )
+
+        # Case 2: This message is a relayed copy — find the original
+        original = db.fetchone(
+            "SELECT original_message_id, original_channel_id FROM relayed_messages WHERE relayed_message_id = ?",
+            (message_id,),
+        )
+
+        if not copies and not original:
+            return
+
+        # Deduplicate targets and exclude the source channel
+        targets: set[tuple[str, str]] = set()
+        for row in copies:
+            targets.add((row["relayed_message_id"], row["relayed_channel_id"]))
+        if original:
+            targets.add((original["original_message_id"], original["original_channel_id"]))
+        targets.discard((message_id, channel_id))
+
+        if not targets:
+            return
+
+        # Resolve emoji
+        resolved: discord.PartialEmoji | str | None = None
+        emoji = payload.emoji
+        if emoji.id is None:
+            resolved = str(emoji)  # Unicode emoji
+        else:
+            # Custom emoji — attempt cache guild resolution for cross-server rendering
+            resolved = await self._resolve_reaction_emoji(emoji)
+        if resolved is None:
+            return
+
+        for target_mid, target_cid in targets:
+            ch = self.bot.get_channel(int(target_cid))
+            if ch is None:
+                try:
+                    ch = await self.bot.fetch_channel(int(target_cid))
+                except Exception:
+                    continue
+            try:
+                msg = await ch.fetch_message(int(target_mid))
+                if add:
+                    await msg.add_reaction(resolved)
+                else:
+                    user = discord.Object(id=payload.user_id)
+                    await msg.remove_reaction(resolved, user)
+            except (discord.NotFound, discord.Forbidden, discord.HTTPException) as exc:
+                log.warn("REACTION-SYNC", f"Failed to {'add' if add else 'remove'} reaction on {target_mid}: {exc}")
+
+    async def _resolve_reaction_emoji(self, emoji: discord.PartialEmoji) -> discord.PartialEmoji | str:
+        """Resolve a custom emoji for cross-server reaction use via cache guild.
+
+        Returns the original PartialEmoji if the guild that owns the emoji is
+        shared with the bot, or a cached-guild PartialEmoji if available.
+        Falls back to the original PartialEmoji on failure.
+        """
+        if emoji.id is None:
+            return str(emoji)
+
+        cached_id = await self._ensure_emoji_cached(str(emoji.id), emoji.animated, emoji.name)
+        if cached_id:
+            return discord.PartialEmoji(name=emoji.name, animated=emoji.animated, id=int(cached_id))
+
+        # Fallback — use original emoji
+        return emoji
 
 
 async def setup(bot: commands.Bot):
