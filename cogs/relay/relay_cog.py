@@ -673,41 +673,15 @@ class RelayCog(commands.Cog):
         payload_content = final_content
 
         payload_embeds = []
+        snapshot_attachments = []
         if original.message_snapshots:
             snap = original.message_snapshots[0]
             forward_text = snap.content or "*(No text)*"
-            forward_embed = Embed(color=0x4E5058, description=forward_text[:4096])
-
-            # Discord snapshots expose partial message data; keep this defensive
-            # so forward rendering works across discord.py versions.
-            snapshot_author = getattr(snap, "author", None)
-            if snapshot_author:
-                forward_embed.set_author(
-                    name=getattr(snapshot_author, "display_name", None) or getattr(snapshot_author, "name", "Forwarded message"),
-                    icon_url=getattr(getattr(snapshot_author, "display_avatar", None), "url", None),
-                )
-            else:
-                forward_embed.set_author(name="Forwarded message")
-
-            snapshot_channel = getattr(snap, "channel", None)
-            footer_parts: list[str] = []
-            if snapshot_channel:
-                channel_name = getattr(snapshot_channel, "name", None) or getattr(snapshot_channel, "id", "unknown")
-                footer_parts.append(f"#{channel_name}")
-            snapshot_created_at = getattr(snap, "created_at", None)
-            if snapshot_created_at:
-                footer_parts.append(snapshot_created_at.strftime("%p%I:%M").replace("AM", "上午").replace("PM", "下午"))
-            if footer_parts:
-                forward_embed.set_footer(text=" • ".join(footer_parts))
-
-            payload_embeds.append(forward_embed)
+            payload_content += f"\n> ↱ Forwarded\n{forward_text}"
 
             if snap.embeds:
                 payload_embeds.extend(snap.embeds)
-            for att in snap.attachments:
-                line = f"\n{att.url}"
-                if len(payload_content) + len(line) <= _DISCORD_MSG_LIMIT - 50:
-                    payload_content += line
+            snapshot_attachments = list(snap.attachments)
 
         if original.poll:
             poll_embed = Embed(color=0x5865F2)
@@ -748,7 +722,8 @@ class RelayCog(commands.Cog):
         payload_content = self._strip_embed_urls_from_content(payload_content, original.embeds)
         target_guild = self.bot.get_guild(int(target["guild_id"]))
         payload_content, payload_embeds = await self._resolve_custom_emojis(payload_content, payload_embeds, target_guild)
-        payload_content, relay_files = self._append_attachment_previews(payload_content, payload_embeds, original.attachments)
+        all_attachments = list(original.attachments) + snapshot_attachments
+        payload_content, relay_files = self._append_attachment_previews(payload_content, payload_embeds, all_attachments)
 
         # Download images for multipart upload (grid layout), fallback to URL on failure
         files_for_upload: list[dict] = []
