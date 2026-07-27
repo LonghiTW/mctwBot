@@ -32,6 +32,7 @@ CONFIGURED_FEATURE_EXTENSIONS = {
     },
     "moderation": {
         "welcome_cleaner": "cogs.moderation.welcome_cleaner",
+        "guild_tracker": "cogs.moderation.guild_tracker",
     },
 }
 
