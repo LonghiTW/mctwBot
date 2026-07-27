@@ -571,12 +571,13 @@ class RelayCog(commands.Cog):
         username: str, avatar_url: str, filtered_content: str,
         exec_id: str, thread_route: dict,
     ):
+        is_forward = bool(original.message_snapshots)
         reply_embed = None
         final_content = filtered_content
         has_unmapped_roles = False
 
         # Reply reconstruction
-        if original.reference and original.reference.message_id:
+        if not is_forward and original.reference and original.reference.message_id:
             replied = None
             try:
                 replied = await original.channel.fetch_message(original.reference.message_id)
@@ -674,8 +675,33 @@ class RelayCog(commands.Cog):
         payload_embeds = []
         if original.message_snapshots:
             snap = original.message_snapshots[0]
-            if snap.content:
-                payload_content += f"\n> *Forwarded:*\n{snap.content}"
+            forward_text = snap.content or "*(No text)*"
+            forward_embed = Embed(color=0x4E5058, description=forward_text[:4096])
+
+            # Discord snapshots expose partial message data; keep this defensive
+            # so forward rendering works across discord.py versions.
+            snapshot_author = getattr(snap, "author", None)
+            if snapshot_author:
+                forward_embed.set_author(
+                    name=getattr(snapshot_author, "display_name", None) or getattr(snapshot_author, "name", "Forwarded message"),
+                    icon_url=getattr(getattr(snapshot_author, "display_avatar", None), "url", None),
+                )
+            else:
+                forward_embed.set_author(name="Forwarded message")
+
+            snapshot_channel = getattr(snap, "channel", None)
+            footer_parts: list[str] = []
+            if snapshot_channel:
+                channel_name = getattr(snapshot_channel, "name", None) or getattr(snapshot_channel, "id", "unknown")
+                footer_parts.append(f"#{channel_name}")
+            snapshot_created_at = getattr(snap, "created_at", None)
+            if snapshot_created_at:
+                footer_parts.append(snapshot_created_at.strftime("%p%I:%M").replace("AM", "上午").replace("PM", "下午"))
+            if footer_parts:
+                forward_embed.set_footer(text=" • ".join(footer_parts))
+
+            payload_embeds.append(forward_embed)
+
             if snap.embeds:
                 payload_embeds.extend(snap.embeds)
             for att in snap.attachments:
@@ -771,7 +797,7 @@ class RelayCog(commands.Cog):
             "original_channel_id": str(original.channel.id),
             "target_channel_id": target["channel_id"],
             "execution_id": exec_id,
-            "replied_to_id": str(original.reference.message_id) if original.reference else None,
+            "replied_to_id": str(original.reference.message_id) if original.reference and not is_forward else None,
             "group_id": target["group_id"],
             **thread_route,
         }
