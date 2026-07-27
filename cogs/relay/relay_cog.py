@@ -1090,89 +1090,156 @@ class RelayCog(commands.Cog):
             await ctx.send("❌ 只有 admin.user_ids 中的管理員才能使用此指令。")
             return
         try:
-            # Snapshot old channels before sync
             db = DatabaseManager()
+
+            # -------- 1. Snapshot old channels --------
             old_rows = db.fetchall(
                 """SELECT lc.channel_id, lc.guild_id, lc.group_id, rg.group_name
                    FROM linked_channels lc
                    JOIN relay_groups rg ON rg.group_id = lc.group_id"""
             )
             old_by_group: dict[str, set[str]] = {}
+            old_info: dict[str, tuple[str, str]] = {}  # channel_id -> (guild_id, group_name)
             for r in old_rows:
                 gname = r["group_name"]
                 old_by_group.setdefault(gname, set()).add(r["channel_id"])
+                old_info[r["channel_id"]] = (r["guild_id"], gname)
 
+            # -------- 2. Read config channels to detect inaccessibility --------
+            config = load_config()
+            config_channels_in_groups: dict[str, set[str]] = {}
+            for g_cfg in config.get("relay", {}).get("groups", []):
+                gname = str(g_cfg.get("name", "")).strip()
+                for ch_cfg in g_cfg.get("channels", []):
+                    cid = str(ch_cfg.get("channel_id", "")).strip()
+                    if cid:
+                        config_channels_in_groups.setdefault(gname, set()).add(cid)
+
+            # -------- 3. Sync --------
             await sync_configured_relays(self.bot)
 
-            # Snapshot new channels after sync
+            # -------- 4. Snapshot new channels --------
             new_rows = db.fetchall(
                 """SELECT lc.channel_id, lc.guild_id, lc.group_id, rg.group_name
                    FROM linked_channels lc
                    JOIN relay_groups rg ON rg.group_id = lc.group_id"""
             )
             new_by_group: dict[str, set[str]] = {}
-            new_channel_info: dict[str, tuple[str, str]] = {}  # channel_id -> (guild_id, group_name)
+            new_info: dict[str, tuple[str, str]] = {}
             for r in new_rows:
                 gname = r["group_name"]
                 new_by_group.setdefault(gname, set()).add(r["channel_id"])
-                new_channel_info[r["channel_id"]] = (r["guild_id"], gname)
-
-            # Compute diffs per group
-            all_group_names = set(old_by_group) | set(new_by_group)
-            diff_lines: list[str] = []
-            for gname in sorted(all_group_names):
-                old_set = old_by_group.get(gname, set())
-                new_set = new_by_group.get(gname, set())
-                added = new_set - old_set
-                removed = old_set - new_set
-                if not added and not removed:
-                    continue
-                diff_lines.append(f"**{gname}**")
-                for cid in sorted(added):
-                    gid, _ = new_channel_info.get(cid, ("?", gname))
-                    g = self.bot.get_guild(int(gid))
-                    gn = g.name if g else gid
-                    diff_lines.append(f"  ➕ <#{cid}>（{gn}）")
-                for cid in sorted(removed):
-                    diff_lines.append(f"  ➖ <#{cid}>")
-                diff_lines.append("")
+                new_info[r["channel_id"]] = (r["guild_id"], gname)
 
             # Re-apply prune_days
             self._prune_old_messages()
 
-            if diff_lines:
-                summary = "✅ 設定已重新載入。\n\n**頻道變更：**\n" + "\n".join(diff_lines).strip()
-                await ctx.send(summary[:1900])
-                # Also broadcast to unaffected channels
-                config = load_config()
-                relay_cfg = config.get("relay", {})
-                for gname in sorted(all_group_names):
-                    kept = new_by_group.get(gname, set()) & old_by_group.get(gname, set())
-                    added_g = new_by_group.get(gname, set()) - old_by_group.get(gname, set())
-                    removed_g = old_by_group.get(gname, set()) - new_by_group.get(gname, set())
-                    if not added_g and not removed_g:
-                        continue
-                    # Send announcement to remaining channels
-                    msg_parts = [f"**中繼群組 {gname} 有變更**"]
-                    for cid in sorted(added_g):
-                        msg_parts.append(f"  ➕ 新增 <#{cid}>")
-                    for cid in sorted(removed_g):
-                        msg_parts.append(f"  ➖ 移除 <#{cid}>")
-                    announce_text = "\n".join(msg_parts)
-                    for cid in kept:
-                        ch = self.bot.get_channel(int(cid))
-                        if ch is None:
-                            try:
-                                ch = await self.bot.fetch_channel(int(cid))
-                            except Exception:
-                                continue
-                        if hasattr(ch, "send"):
-                            try:
-                                await ch.send(announce_text)
-                            except Exception:
-                                pass
-            else:
+            # -------- 5. Compute diffs per group --------
+            all_group_names = set(old_by_group) | set(new_by_group) | set(config_channels_in_groups)
+            has_any_change = False
+            admin_notify_lines: list[str] = []
+
+            for gname in sorted(all_group_names):
+                old_set = old_by_group.get(gname, set())
+                new_set = new_by_group.get(gname, set())
+                config_set = config_channels_in_groups.get(gname, set())
+
+                added = new_set - old_set
+                removed = old_set - new_set
+                inaccessible = removed & config_set   # in config but gone from DB (bot lost access)
+                normal_removed = removed - config_set  # intentionally removed from config
+
+                if not added and not inaccessible and not normal_removed:
+                    continue
+                has_any_change = True
+
+                # Kept channels (remain in both old and new)
+                kept = old_set & new_set
+
+                # --- Notify kept channels about additions & removals ---
+                notify_kept_parts = [f"**中繼群組 {gname} 有變更**"]
+                for cid in sorted(added):
+                    notify_kept_parts.append(f"  ➕ 新增 <#{cid}>")
+                for cid in sorted(normal_removed):
+                    notify_kept_parts.append(f"  ➖ 移除 <#{cid}>")
+                for cid in sorted(inaccessible):
+                    notify_kept_parts.append(f"  ➖ 移除 <#{cid}>（無法存取，機器人可能已被踢出）")
+                notify_kept_text = "\n".join(notify_kept_parts)
+
+                for cid in kept:
+                    ch = self.bot.get_channel(int(cid))
+                    if ch is None:
+                        try:
+                            ch = await self.bot.fetch_channel(int(cid))
+                        except Exception:
+                            continue
+                    if hasattr(ch, "send"):
+                        try:
+                            await ch.send(notify_kept_text)
+                        except Exception:
+                            pass
+
+                # --- Welcome new channels ---
+                for cid in sorted(added):
+                    other_in_group = [f"<#{oc}>" for oc in sorted(new_set) if oc != cid]
+                    other_text = "、".join(other_in_group) if other_in_group else "無"
+                    welcome = (
+                        f"👋 此頻道已加入中繼群組 **{gname}**。\n"
+                        f"群組內其他頻道：{other_text}"
+                    )
+                    ch = self.bot.get_channel(int(cid))
+                    if ch is None:
+                        try:
+                            ch = await self.bot.fetch_channel(int(cid))
+                        except Exception:
+                            continue
+                    if hasattr(ch, "send"):
+                        try:
+                            await ch.send(welcome)
+                        except Exception:
+                            pass
+
+                # --- Notify admin_user_ids about inaccessible channels ---
+                if inaccessible:
+                    for cid in sorted(inaccessible):
+                        gid, _ = old_info.get(cid, ("?", gname))
+                        msg = (
+                            f"⚠️ 中繼頻道無法存取\n\n"
+                            f"**群組：** {gname}\n"
+                            f"**頻道：** <#{cid}>\n"
+                            f"**伺服器：** {gid}\n\n"
+                            f"該頻道仍存在於 config.json，但機器人可能已失去存取權限（被踢出等），"
+                            f"已自動從同步清單中移除。"
+                        )
+                        await notify_admins(self.bot, "中繼同步錯誤", msg)
+                        admin_notify_lines.append(f"  ⚠️ <#{cid}>（已通知管理員）")
+
+            # -------- 6. Respond to command --------
+            if not has_any_change:
                 await ctx.send("✅ 設定已重新載入，無頻道變更。")
+                return
+
+            summary = "✅ 設定已重新載入。\n\n**頻道變更：**\n"
+            for gname in sorted(all_group_names):
+                old_set = old_by_group.get(gname, set())
+                new_set = new_by_group.get(gname, set())
+                config_set = config_channels_in_groups.get(gname, set())
+                added = new_set - old_set
+                removed = old_set - new_set
+                inaccessible = removed & config_set
+                normal_removed = removed - config_set
+                if not added and not inaccessible and not normal_removed:
+                    continue
+                summary += f"**{gname}**\n"
+                for cid in sorted(added):
+                    summary += f"  ➕ <#{cid}>\n"
+                for cid in sorted(normal_removed):
+                    summary += f"  ➖ <#{cid}>\n"
+                for cid in sorted(inaccessible):
+                    summary += f"  ➖ <#{cid}>（無法存取）\n"
+                summary += "\n"
+
+            await ctx.send(summary[:1900])
         except Exception as exc:
             await ctx.send(f"❌ 載入失敗：{exc}")
 
@@ -1214,10 +1281,8 @@ class RelayCog(commands.Cog):
 
             for i, ch in enumerate(channels):
                 prefix = "  └" if i == len(channels) - 1 else "  ├"
-                tg = self.bot.get_guild(int(ch["guild_id"]))
-                tg_name = tg.name if tg else ch["guild_id"]
                 d = "🔄" if ch["direction"] == "BOTH" else ("📤" if ch["direction"] == "SEND_ONLY" else "📥")
-                lines.append(f"{prefix} {d} {tg_name} / <#{ch['channel_id']}>")
+                lines.append(f"{prefix} {d} <#{ch['channel_id']}>")
 
             lines.append("")
 
