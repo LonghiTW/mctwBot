@@ -3,7 +3,7 @@ from collections.abc import Awaitable, Callable
 
 import aiohttp
 import discord
-from discord import Embed, Message
+from discord import Embed, Message, StickerFormatType
 
 from .rendering import (
     append_attachment_previews,
@@ -14,6 +14,7 @@ from .rendering import (
 
 _DISCORD_MSG_LIMIT = 2000
 _NO_MENTIONS = {"parse": []}
+_MAX_UPLOAD_BYTES = 8_000_000
 
 EmojiContentResolver = Callable[[str, list, discord.Guild | None], Awaitable[tuple[str, list]]]
 
@@ -100,18 +101,12 @@ class RelayPayloadBuilder:
         all_attachments = list(original.attachments) + snapshot_attachments
         payload_content, relay_files = append_attachment_previews(payload_content, payload_embeds, all_attachments)
 
-        files_for_upload = await self._download_files_for_upload(payload_content, relay_files)
-        payload_content = files_for_upload[0]
-        files = files_for_upload[1]
+        payload_content, files = await self._download_files_for_upload(payload_content, relay_files)
 
         if original.stickers:
             attachment_urls = {att.url.rstrip("/") for att in original.attachments}
-            for sticker in original.stickers:
-                if sticker.url.rstrip("/") in attachment_urls:
-                    continue
-                line = f"\n{sticker.url}"
-                if len(payload_content) + len(line) <= _DISCORD_MSG_LIMIT - 50:
-                    payload_content += line
+            payload_content, sticker_files = await self._download_stickers_for_upload(payload_content, original.stickers, attachment_urls)
+            files.extend(sticker_files)
 
         payload = {
             "content": payload_content,
@@ -146,7 +141,7 @@ class RelayPayloadBuilder:
                     ) as response:
                         if response.status == 200:
                             data = await response.read()
-                            if len(data) < 8_000_000:
+                            if len(data) < _MAX_UPLOAD_BYTES:
                                 files_for_upload.append({
                                     "filename": relay_file["filename"],
                                     "data": data,
@@ -160,3 +155,62 @@ class RelayPayloadBuilder:
                 if len(payload_content) + len(line) <= _DISCORD_MSG_LIMIT - 50:
                     payload_content += line
         return payload_content, files_for_upload
+
+    async def _download_stickers_for_upload(self, payload_content: str, stickers, attachment_urls: set[str]) -> tuple[str, list]:
+        files_for_upload: list[dict] = []
+        async with aiohttp.ClientSession() as session:
+            for sticker in stickers:
+                sticker_url = sticker.url.rstrip("/")
+                if sticker_url in attachment_urls:
+                    continue
+
+                upload_item = await self._download_sticker(session, sticker)
+                if upload_item:
+                    files_for_upload.append(upload_item)
+                    continue
+
+                line = f"\n{sticker.url}"
+                if len(payload_content) + len(line) <= _DISCORD_MSG_LIMIT - 50:
+                    payload_content += line
+        return payload_content, files_for_upload
+
+    async def _download_sticker(self, session: aiohttp.ClientSession, sticker) -> dict | None:
+        sticker_format = getattr(sticker, "format", None)
+        if sticker_format is StickerFormatType.lottie:
+            return None
+
+        content_type = _sticker_content_type(sticker_format)
+        filename = _sticker_filename(sticker)
+        try:
+            async with session.get(sticker.url, timeout=aiohttp.ClientTimeout(total=10)) as response:
+                if response.status != 200:
+                    return None
+                data = await response.read()
+                if len(data) >= _MAX_UPLOAD_BYTES:
+                    return None
+        except Exception:
+            return None
+
+        return {
+            "filename": filename,
+            "data": data,
+            "content_type": content_type,
+        }
+
+
+def _sticker_filename(sticker) -> str:
+    sticker_name = str(getattr(sticker, "name", "sticker") or "sticker")
+    safe_name = "".join(char if char.isalnum() or char in ("_", "-") else "_" for char in sticker_name).strip("_")
+    if not safe_name:
+        safe_name = "sticker"
+    sticker_format = getattr(sticker, "format", None)
+    extension = "gif" if sticker_format is StickerFormatType.gif else "png"
+    return f"{safe_name[:40]}_{getattr(sticker, 'id', 'unknown')}.{extension}"
+
+
+def _sticker_content_type(sticker_format) -> str:
+    if sticker_format is StickerFormatType.gif:
+        return "image/gif"
+    if sticker_format is StickerFormatType.apng:
+        return "image/apng"
+    return "image/png"
