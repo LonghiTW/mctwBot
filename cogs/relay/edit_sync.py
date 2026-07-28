@@ -7,8 +7,10 @@ from discord import Embed, Message
 
 from database import DatabaseManager
 from utils.log_manager import LogManager
-from .routing import configured_channel_id_for_stored_channel, linked_channel_id_for_message, webhook_thread_for_stored_channel
+from .routing import linked_channel_id_for_message
 from .rendering import append_attachment_previews, resolve_klipy_urls, strip_embed_urls_from_content
+from .webhook_messages import WebhookMessageClient
+from .message_store import RelayMessageStore
 
 log = LogManager
 
@@ -22,6 +24,7 @@ class EditSync:
     def __init__(self, bot: discord.Client, resolve_emojis: EmojiContentResolver):
         self.bot = bot
         self._resolve_emojis = resolve_emojis
+        self.webhooks = WebhookMessageClient(bot)
 
     async def sync_edit(self, message: Message, relayed_message_types) -> None:
         if not message.guild:
@@ -34,11 +37,8 @@ class EditSync:
             return
 
         db = DatabaseManager()
-        link = db.fetchone(
-            "SELECT 1 FROM relayed_messages WHERE original_message_id = ? LIMIT 1",
-            (str(message.id),),
-        )
-        if not link:
+        store = RelayMessageStore(db)
+        if not store.has_original(str(message.id)):
             return
 
         source = db.fetchone(
@@ -92,31 +92,17 @@ class EditSync:
         final_content, payload_embeds = await self._resolve_emojis(final_content, payload_embeds, None)
         final_content, _ = append_attachment_previews(final_content, payload_embeds, message.attachments)
 
-        relayed = db.fetchall(
-            "SELECT relayed_message_id, relayed_channel_id FROM relayed_messages WHERE original_message_id = ?",
-            (str(message.id),),
-        )
+        relayed = store.relayed_for_original(str(message.id))
         for row in relayed:
             try:
-                cfg_id = configured_channel_id_for_stored_channel(db, row["relayed_channel_id"])
-                link_info = db.fetchone(
-                    "SELECT webhook_url, guild_id FROM linked_channels WHERE channel_id = ?", (cfg_id,)
-                )
-                if not link_info or not link_info["webhook_url"]:
-                    continue
-                webhook = discord.Webhook.from_url(
-                    link_info["webhook_url"],
-                    session=self.bot.http._HTTPClient__session,
-                )
-                thread = webhook_thread_for_stored_channel(db, row["relayed_channel_id"])
                 edit_kwargs = {
                     "content": final_content,
                     "embeds": payload_embeds,
                     "allowed_mentions": discord.AllowedMentions.none(),
                 }
-                if thread:
-                    edit_kwargs["thread"] = thread
-                await webhook.edit_message(int(row["relayed_message_id"]), **edit_kwargs)
+                await self.webhooks.edit_message(db, row["relayed_channel_id"], row["relayed_message_id"], **edit_kwargs)
+            except LookupError:
+                pass
             except discord.NotFound:
                 pass
             except Exception as exc:

@@ -6,7 +6,6 @@ Consolidates all relay event handlers into a single Cog.
 import re
 import secrets
 
-import aiohttp
 import discord
 from discord import Message, Embed
 from discord.ext import commands
@@ -21,24 +20,20 @@ from .routing import (
     prepare_thread_route,
 )
 from .rendering import (
-    append_attachment_previews,
     build_reply_embed,
-    format_referenced_message_text,
-    resolve_klipy_urls,
-    strip_embed_urls_from_content,
 )
+from .payload_builder import RelayPayloadBuilder
 from .reactions import ReactionSync
 from .emoji_resolver import EmojiResolver
 from .message_sync import MessageSync
 from .edit_sync import EditSync
 from .thread_sync import ThreadSync
 from .filters import RelayFilters
+from .admin_views import RelayAdminViews
 
 log = LogManager
 
 _MAX_USERNAME_LENGTH = 80
-_DISCORD_MSG_LIMIT = 2000
-_NO_MENTIONS = {"parse": []}
 
 # Only relay these message types — filter out system messages that cause echo loops
 _RELAY_MESSAGE_TYPES = frozenset({
@@ -60,6 +55,8 @@ class RelayCog(commands.Cog):
         self.edit_sync = EditSync(bot, self.emoji_resolver.resolve_content)
         self.thread_sync = ThreadSync(bot)
         self.filters = RelayFilters(bot)
+        self.payload_builder = RelayPayloadBuilder(bot, self.emoji_resolver.resolve_content)
+        self.admin_views = RelayAdminViews(bot)
 
     # ------------------------------------------------------------------
     # on_ready — sync config and prune DB
@@ -349,166 +346,14 @@ class RelayCog(commands.Cog):
         if not content_no_mentions and has_unmapped_roles:
             final_content = "*(Unmapped role in original. Admin can map it or enable auto-sync.)*"
 
-        payload_content = final_content
-
-        payload_embeds = []
-        snapshot_attachments = []
-        if original.message_snapshots:
-            snap = original.message_snapshots[0]
-            forward_text = f"↱ {format_referenced_message_text(snap.content, snap.attachments)}"
-            ref = original.reference
-            ref_guild_id = getattr(ref, "guild_id", None) or original.guild.id
-            ref_channel_id = getattr(ref, "channel_id", None)
-            ref_message_id = getattr(ref, "message_id", None)
-            if ref_channel_id and ref_message_id:
-                forward_url = f"https://discord.com/channels/{ref_guild_id}/{ref_channel_id}/{ref_message_id}"
-                payload_content += f"\n> Forwarded from {forward_url}\n{forward_text}"
-            else:
-                payload_content += f"\n> Forwarded\n{forward_text}"
-
-            if snap.embeds:
-                payload_embeds.extend(snap.embeds)
-            snapshot_attachments = list(snap.attachments)
-
-        if original.poll:
-            poll_embed = Embed(color=0x5865F2)
-            poll_embed.set_author(name="📊 Poll")
-            poll_embed.title = original.poll.question[:256]
-            desc = []
-            for i, ans in enumerate(original.poll.answers):
-                emoji = ans.emoji or f"{i+1}."
-                desc.append(f"{emoji} **{ans.text}**")
-            poll_embed.description = "\n".join(desc)[:4096]
-            payload_embeds.append(poll_embed)
-
-        if len(payload_content) > _DISCORD_MSG_LIMIT:
-            payload_content = payload_content[:_DISCORD_MSG_LIMIT - 50] + "...(truncated)"
-
-        if reply_embed:
-            payload_embeds.append(reply_embed)
-
-        for emb in original.embeds:
-            clean = Embed(
-                title=emb.title,
-                description=emb.description[:4096] if emb.description else None,
-                color=emb.color, url=emb.url, timestamp=emb.timestamp,
-            )
-            if emb.author:
-                clean.set_author(name=emb.author.name, url=emb.author.url, icon_url=emb.author.icon_url)
-            if emb.footer:
-                clean.set_footer(text=emb.footer.text, icon_url=emb.footer.icon_url)
-            if emb.image:
-                clean.set_image(url=emb.image.url)
-            if emb.thumbnail:
-                clean.set_thumbnail(url=emb.thumbnail.url)
-            if emb.fields:
-                for f in emb.fields:
-                    clean.add_field(name=f.name, value=f.value, inline=f.inline)
-            payload_embeds.append(clean)
-        payload_content, payload_embeds = await resolve_klipy_urls(payload_content, payload_embeds)
-        payload_content = strip_embed_urls_from_content(payload_content, original.embeds)
-        target_guild = self.bot.get_guild(int(target["guild_id"]))
-        payload_content, payload_embeds = await self.emoji_resolver.resolve_content(payload_content, payload_embeds, target_guild)
-        all_attachments = list(original.attachments) + snapshot_attachments
-        payload_content, relay_files = append_attachment_previews(payload_content, payload_embeds, all_attachments)
-
-        # Download images for multipart upload (grid layout), fallback to URL on failure
-        files_for_upload: list[dict] = []
-        if relay_files:
-            async with aiohttp.ClientSession() as dl_session:
-                for rf in relay_files:
-                    try:
-                        async with dl_session.get(
-                            rf["url"], timeout=aiohttp.ClientTimeout(total=10)
-                        ) as resp:
-                            if resp.status == 200:
-                                data = await resp.read()
-                                if len(data) < 8_000_000:  # Discord 8 MB limit
-                                    files_for_upload.append({
-                                        "filename": rf["filename"],
-                                        "data": data,
-                                        "content_type": rf["content_type"],
-                                    })
-                                    continue
-                    except Exception:
-                        pass
-                    # Fallback: put clean URL (no signature params) in content
-                    clean_url = rf["url"].split("?")[0]
-                    line = f"\n{clean_url}"
-                    if len(payload_content) + len(line) <= _DISCORD_MSG_LIMIT - 50:
-                        payload_content += line
-        if original.stickers:
-            attachment_urls = {att.url.rstrip("/") for att in original.attachments}
-            for s in original.stickers:
-                if s.url.rstrip("/") in attachment_urls:
-                    continue
-                line = f"\n{s.url}"
-                if len(payload_content) + len(line) <= _DISCORD_MSG_LIMIT - 50:
-                    payload_content += line
-
-        payload = {
-            "content": payload_content,
-            "username": username,
-            "avatar_url": avatar_url,
-            "embeds": [e.to_dict() if hasattr(e, "to_dict") else e for e in payload_embeds],
-            "allowed_mentions": _NO_MENTIONS,
-        }
-
-        meta = {
-            "original_msg_id": str(original.id),
-            "original_channel_id": str(original.channel.id),
-            "target_channel_id": target["channel_id"],
-            "execution_id": exec_id,
-            "replied_to_id": str(original.reference.message_id) if original.reference and not is_forward else None,
-            "group_id": target["group_id"],
-            "group_name": group["group_name"],
-            **thread_route,
-        }
+        payload, meta, files_for_upload = await self.payload_builder.build(
+            original, target, group, username, avatar_url, final_content,
+            reply_embed, is_forward, exec_id, thread_route,
+        )
         await relay_queue.add(target["webhook_url"], payload, meta, files=files_for_upload)
 
     # ------------------------------------------------------------------
     # Admin commands
-    # ------------------------------------------------------------------
-    def _is_config_admin(self, member: discord.User | discord.Member | None) -> bool:
-        if member is None:
-            return False
-        admin_ids = {int(uid) for uid in load_config().get("admin", {}).get("user_ids", [])}
-        return member.id in admin_ids
-
-    def _can_view_relaylist(self, author: discord.User | discord.Member | None) -> bool:
-        """relaylist 權限：config admin 或 guild administrator/manage_guild。"""
-        if author is None:
-            return False
-        if self._is_config_admin(author):
-            return True
-        if isinstance(author, discord.Member) and author.guild:
-            return author.guild_permissions.manage_guild or author.guild_permissions.administrator
-        return False
-
-    def _format_channel_link(self, guild_id: str, channel_id: str) -> str:
-        guild_name = str(guild_id)
-        channel_name = str(channel_id)
-
-        try:
-            guild = self.bot.get_guild(int(guild_id))
-            if guild:
-                guild_name = guild.name
-                channel = guild.get_channel(int(channel_id))
-                if channel:
-                    channel_name = channel.name
-            else:
-                channel = self.bot.get_channel(int(channel_id))
-                if channel:
-                    channel_name = channel.name
-                    if getattr(channel, "guild", None):
-                        guild_name = channel.guild.name
-        except Exception:
-            pass
-
-        return f"[{guild_name}](https://discord.com/channels/{guild_id}/{channel_id})"
-
-    # ------------------------------------------------------------------
-    # on_bot_reload — react to config reload (diff + notifications)
     # ------------------------------------------------------------------
     @commands.Cog.listener()
     async def on_bot_reload(
@@ -517,140 +362,34 @@ class RelayCog(commands.Cog):
         new_rows: list[dict],
     ):
         """Called after !reload syncs config. Computes diff and notifies channels."""
-        old_by_group: dict[str, set[str]] = {}
-        for r in old_rows:
-            old_by_group.setdefault(r["group_name"], set()).add(r["channel_id"])
-
-        new_by_group: dict[str, set[str]] = {}
-        for r in new_rows:
-            new_by_group.setdefault(r["group_name"], set()).add(r["channel_id"])
-
-        channel_guild: dict[str, str] = {}
-        for r in old_rows + new_rows:
-            channel_guild[r["channel_id"]] = r["guild_id"]
-
-        all_group_names = set(old_by_group) | set(new_by_group)
-
-        for gname in sorted(all_group_names):
-            old_set = old_by_group.get(gname, set())
-            new_set = new_by_group.get(gname, set())
-
-            added = new_set - old_set
-            removed = old_set - new_set
-            kept = old_set & new_set
-
-            if not added and not removed:
-                continue
-
-            # Notify kept channels about additions & removals
-            msg_parts = [f"**{gname} 頻道更新**"]
-            for cid in sorted(added):
-                gid = channel_guild.get(cid, "?")
-                msg_parts.append(f"  ➕ 新增 {self._format_channel_link(gid, cid)}")
-            for cid in sorted(removed):
-                gid = channel_guild.get(cid, "?")
-                msg_parts.append(f"  ➖ 移除 {self._format_channel_link(gid, cid)}")
-            notify_text = "\n".join(msg_parts)
-
-            for cid in kept:
-                ch = self.bot.get_channel(int(cid))
-                if ch is None:
-                    try:
-                        ch = await self.bot.fetch_channel(int(cid))
-                    except Exception:
-                        continue
-                if hasattr(ch, "send"):
-                    try:
-                        await ch.send(notify_text)
-                    except Exception:
-                        pass
-
-            # Welcome new channels
-            for cid in sorted(added):
-                others = [
-                    self._format_channel_link(channel_guild.get(oc, "?"), oc)
-                    for oc in sorted(new_set) if oc != cid
-                ]
-                other_text = "、".join(others) if others else "無"
-                welcome = (
-                    f"👋 此頻道已加入麥塊聯盟的群組 **{gname}**。\n"
-                    f"群組內其他頻道：{other_text}"
-                )
-                ch = self.bot.get_channel(int(cid))
-                if ch is None:
-                    try:
-                        ch = await self.bot.fetch_channel(int(cid))
-                    except Exception:
-                        continue
-                if hasattr(ch, "send"):
-                    try:
-                        await ch.send(welcome)
-                    except Exception:
-                        pass
+        update_messages, welcome_messages = self.admin_views.build_reload_notifications(old_rows, new_rows)
+        for channel_id, text in update_messages + welcome_messages:
+            channel = self.bot.get_channel(int(channel_id))
+            if channel is None:
+                try:
+                    channel = await self.bot.fetch_channel(int(channel_id))
+                except Exception:
+                    continue
+            if hasattr(channel, "send"):
+                try:
+                    await channel.send(text)
+                except Exception:
+                    pass
 
     @commands.command(name="relaylist")
     async def list_relays(self, ctx: commands.Context):
         """列出所有中繼群組與所屬頻道／伺服器。"""
-        if not self._can_view_relaylist(ctx.author):
+        if not self.admin_views.can_view_relaylist(ctx.author):
             await ctx.send("❌ 你沒有權限檢視中繼列表。僅限 admin.user_ids 或擁有「管理伺服器」權限者使用。")
             return
 
-        # Read hidden flags from config.json
-        config = load_config()
-        relay_cfg = config.get("relay", {})
-        hidden_groups: set[str] = set()
-        for g_cfg in relay_cfg.get("groups", []):
-            if g_cfg.get("hidden", False):
-                hidden_groups.add(str(g_cfg.get("name", "")).strip())
-
-        db = DatabaseManager()
-        groups = db.fetchall("SELECT * FROM relay_groups ORDER BY group_name")
-        if not groups:
+        chunks = self.admin_views.relaylist_chunks()
+        if not chunks:
             await ctx.send("目前沒有設定任何中繼群組。")
             return
 
-        lines: list[str] = []
-        for g in groups:
-            if g["group_name"] in hidden_groups:
-                continue
-
-            channels = db.fetchall(
-                "SELECT * FROM linked_channels WHERE group_id = ? ORDER BY guild_id, channel_id",
-                (g["group_id"],),
-            )
-            lines.append(f"**{g['group_name']}**")
-
-            if not channels:
-                lines.append("  └ *無頻道*")
-                continue
-
-            for i, ch in enumerate(channels):
-                prefix = "  └" if i == len(channels) - 1 else "  ├"
-                d = "🔄" if ch["direction"] == "BOTH" else ("📤" if ch["direction"] == "SEND_ONLY" else "📥")
-                lines.append(f"{prefix} {d} {self._format_channel_link(ch['guild_id'], ch['channel_id'])}")
-
-            lines.append("")
-
-        text = "\n".join(lines).strip()
-        if not text:
-            await ctx.send("目前沒有顯示任何中繼群組。")
-            return
-
-        if len(text) <= 1900:
-            await ctx.send(text)
-        else:
-            chunks = []
-            current = ""
-            for line in text.split("\n"):
-                if len(current) + len(line) + 1 > 1900:
-                    chunks.append(current)
-                    current = line
-                else:
-                    current += "\n" + line if current else line
-            if current:
-                chunks.append(current)
-            for chunk in chunks:
-                await ctx.send(chunk)
+        for chunk in chunks:
+            await ctx.send(chunk)
 
     # ------------------------------------------------------------------
     # on_raw_reaction_add / remove — sync reactions across relay channels
