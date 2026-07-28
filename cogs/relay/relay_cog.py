@@ -715,16 +715,16 @@ class RelayCog(commands.Cog):
         snapshot_attachments = []
         if original.message_snapshots:
             snap = original.message_snapshots[0]
-            forward_text = snap.content or "*(No text)*"
+            forward_text = f"↱ {self._format_referenced_message_text(snap.content, snap.attachments)}"
             ref = original.reference
             ref_guild_id = getattr(ref, "guild_id", None) or original.guild.id
             ref_channel_id = getattr(ref, "channel_id", None)
             ref_message_id = getattr(ref, "message_id", None)
             if ref_channel_id and ref_message_id:
                 forward_url = f"https://discord.com/channels/{ref_guild_id}/{ref_channel_id}/{ref_message_id}"
-                payload_content += f"\n> ↱ Forwarded from {forward_url}\n{forward_text}"
+                payload_content += f"\n> Forwarded from {forward_url}\n{forward_text}"
             else:
-                payload_content += f"\n> ↱ Forwarded\n{forward_text}"
+                payload_content += f"\n> Forwarded\n{forward_text}"
 
             if snap.embeds:
                 payload_embeds.extend(snap.embeds)
@@ -829,16 +829,13 @@ class RelayCog(commands.Cog):
         if deleted or replied is None:
             return Embed(color=0xB0B8C6, description="*↰ original message was deleted*")
 
-        reply_text = (replied.content or "*(No text)*")[:1000]
+        if replied.message_snapshots:
+            snap = replied.message_snapshots[0]
+            reply_text = f"↱ {self._format_referenced_message_text(snap.content, snap.attachments)}"[:1000]
+        else:
+            reply_text = self._format_referenced_message_text(replied.content, replied.attachments)[:1000]
         if replied.edited_at:
             reply_text += " *(edited)*"
-
-        attachments = list(replied.attachments)
-        first_image = next((att for att in attachments if self._is_image_attachment(att)), None)
-        other_attachments = [att for att in attachments if att is not first_image]
-        if other_attachments:
-            links = "\n".join(att.url.split("?")[0] for att in other_attachments)
-            reply_text = f"{reply_text}\n\n{links}"[:4096]
 
         reply_embed = Embed(color=0xB0B8C6, description=reply_text)
         reply_embed.set_author(
@@ -846,9 +843,13 @@ class RelayCog(commands.Cog):
             url=link,
             icon_url=replied.author.display_avatar.url,
         )
-        if first_image:
-            reply_embed.set_image(url=first_image.url)
         return reply_embed
+
+    def _format_referenced_message_text(self, content: str | None, attachments) -> str:
+        text = (content or "").strip()
+        if attachments:
+            return f"🔗 {text}" if text else "🔗 click to see attachment"
+        return text or "*(No text)*"
 
     def _strip_embed_urls_from_content(self, content: str, embeds: list) -> str:
         """Remove bare URLs from content that are already represented as rich embeds."""
