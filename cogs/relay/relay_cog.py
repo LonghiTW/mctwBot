@@ -1221,7 +1221,7 @@ class RelayCog(commands.Cog):
         except Exception:
             pass
 
-        return f"[{guild_name}/{channel_name}](https://discord.com/channels/{guild_id}/{channel_id})"
+        return f"[{guild_name}](https://discord.com/channels/{guild_id}/{channel_id})"
 
     # ------------------------------------------------------------------
     # on_bot_reload — react to config reload (diff + notifications)
