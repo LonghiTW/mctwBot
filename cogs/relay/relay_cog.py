@@ -3,10 +3,8 @@ RelayCog — cross-server message relay, edit/delete sync, thread/forum sync.
 
 Consolidates all relay event handlers into a single Cog.
 """
-import asyncio
 import re
 import secrets
-from datetime import datetime
 
 import aiohttp
 import discord
@@ -16,12 +14,10 @@ from discord.ext import commands
 from database import DatabaseManager
 from utils.log_manager import LogManager
 from utils.time_utils import snowflake_before
-from utils.admin_notifier import notify_admins
 from app.config_sync import sync_configured_relays, load_config
 from .queue import relay_queue
 from .routing import (
     linked_channel_id_for_message,
-    configured_channel_id_for_stored_channel,
     prepare_thread_route,
 )
 from .rendering import (
@@ -35,6 +31,8 @@ from .reactions import ReactionSync
 from .emoji_resolver import EmojiResolver
 from .message_sync import MessageSync
 from .edit_sync import EditSync
+from .thread_sync import ThreadSync
+from .filters import RelayFilters
 
 log = LogManager
 
@@ -60,6 +58,8 @@ class RelayCog(commands.Cog):
         self.reactions = ReactionSync(bot, self.emoji_resolver.resolve_reaction)
         self.message_sync = MessageSync(bot)
         self.edit_sync = EditSync(bot, self.emoji_resolver.resolve_content)
+        self.thread_sync = ThreadSync(bot)
+        self.filters = RelayFilters(bot)
 
     # ------------------------------------------------------------------
     # on_ready — sync config and prune DB
@@ -123,7 +123,7 @@ class RelayCog(commands.Cog):
             return
 
         if isinstance(message.channel, discord.Thread):
-            await self._mirror_thread_from_relayed_message(message.channel)
+            await self.thread_sync.mirror_thread_from_relayed_message(message.channel)
 
         exec_id = secrets.token_hex(4)
 
@@ -157,7 +157,7 @@ class RelayCog(commands.Cog):
                 if pattern.search(final_content):
                     final_content = pattern.sub("***", final_content)
                     if not is_owner:
-                        self._track_filter_violation(db, message, source, group, f, exec_id)
+                        self.filters.track_violation(db, message, source, group, f, exec_id)
 
         # Build sender identity
         sender_name = message.author.display_name
@@ -231,155 +231,21 @@ class RelayCog(commands.Cog):
     # ------------------------------------------------------------------
     @commands.Cog.listener()
     async def on_thread_create(self, thread: discord.Thread):
-        try:
-            if thread.me is None:
-                await thread.join()
-                log.info("THREAD", f"Joined new thread {thread.id} ({thread.name})")
-        except Exception as exc:
-            log.warn("THREAD", f"Failed to join thread {thread.id}: {exc}")
-
-        if await self._mirror_thread_from_relayed_message(thread):
-            return
+        await self.thread_sync.handle_thread_create(thread)
 
     # ------------------------------------------------------------------
     # on_thread_update — lock / archive / name sync
     # ------------------------------------------------------------------
     @commands.Cog.listener()
     async def on_thread_update(self, before: discord.Thread, after: discord.Thread):
-        if (before.locked == after.locked
-                and before.archived == after.archived
-                and before.name == after.name):
-            return
-
-        db = DatabaseManager()
-
-        # Skip if this is a target thread (prevent echo)
-        if db.fetchone("SELECT 1 FROM relay_threads WHERE target_thread_id = ? LIMIT 1", (str(after.id),)):
-            return
-
-        mappings = db.fetchall(
-            "SELECT * FROM relay_threads WHERE source_thread_id = ?", (str(after.id),)
-        )
-        if not mappings:
-            return
-
-        kwargs = {}
-        if before.locked != after.locked:
-            kwargs["locked"] = after.locked
-        if before.archived != after.archived:
-            kwargs["archived"] = after.archived
-        if before.name != after.name:
-            kwargs["name"] = after.name
-
-        for m in mappings:
-            try:
-                target = self.bot.get_channel(int(m["target_thread_id"]))
-                if target is None:
-                    target = await self.bot.fetch_channel(int(m["target_thread_id"]))
-                await target.edit(**kwargs)
-            except discord.NotFound:
-                db.execute("DELETE FROM relay_threads WHERE target_thread_id = ?", (m["target_thread_id"],))
-                db.commit()
-            except Exception as exc:
-                log.error("THR-UPD", f"Failed {m['target_thread_id']}: {exc}")
+        await self.thread_sync.handle_thread_update(before, after)
 
     # ------------------------------------------------------------------
     # on_thread_delete — delete mirrored threads
     # ------------------------------------------------------------------
     @commands.Cog.listener()
     async def on_thread_delete(self, thread: discord.Thread):
-        db = DatabaseManager()
-        mappings = db.fetchall(
-            "SELECT * FROM relay_threads WHERE source_thread_id = ?", (str(thread.id),)
-        )
-        if not mappings:
-            return
-
-        for m in mappings:
-            try:
-                target = self.bot.get_channel(int(m["target_thread_id"]))
-                if target is None:
-                    target = await self.bot.fetch_channel(int(m["target_thread_id"]))
-                if target:
-                    await target.delete()
-            except discord.NotFound:
-                pass
-            except Exception as exc:
-                log.error("THR-DEL", f"Failed {m['target_thread_id']}: {exc}")
-
-        db.execute(
-            "DELETE FROM relay_threads WHERE source_thread_id = ?", (str(thread.id),)
-        )
-        db.commit()
-
-    # ------------------------------------------------------------------
-    # Helpers
-    # ------------------------------------------------------------------
-    async def _mirror_thread_from_relayed_message(self, thread: discord.Thread) -> bool:
-        db = DatabaseManager()
-        link = db.fetchone(
-            """SELECT original_message_id, original_channel_id
-               FROM relayed_messages
-               WHERE relayed_message_id = ? LIMIT 1""",
-            (str(thread.id),),
-        )
-        if not link:
-            return False
-
-        original_cfg_id = configured_channel_id_for_stored_channel(db, link["original_channel_id"])
-        source = db.fetchone(
-            "SELECT group_id FROM linked_channels WHERE channel_id = ?",
-            (original_cfg_id,),
-        )
-        if not source:
-            return True
-
-        existing = db.fetchone(
-            """SELECT 1 FROM relay_threads
-               WHERE group_id = ? AND target_thread_id = ? LIMIT 1""",
-            (source["group_id"], str(thread.id)),
-        )
-        if existing:
-            return True
-
-        try:
-            original_channel = await self.bot.fetch_channel(int(link["original_channel_id"]))
-            original_message = await original_channel.fetch_message(int(link["original_message_id"]))
-            mirrored = await original_message.create_thread(
-                name=thread.name[:100] or "Relayed thread",
-                auto_archive_duration=thread.auto_archive_duration,
-                slowmode_delay=thread.slowmode_delay,
-                reason="Relay thread opened from mirrored message",
-            )
-            try:
-                if mirrored.me is None:
-                    await mirrored.join()
-            except Exception:
-                pass
-        except discord.HTTPException as exc:
-            log.warn("THREAD-MIRROR", f"Failed to mirror starter thread {thread.id}: {exc}")
-            return True
-
-        db.execute(
-            "DELETE FROM relay_threads WHERE group_id = ? AND target_thread_id = ?",
-            (source["group_id"], str(thread.id)),
-        )
-        db.execute(
-            """INSERT OR REPLACE INTO relay_threads
-               (group_id, source_thread_id, source_parent_channel_id,
-                target_parent_channel_id, target_thread_id)
-               VALUES (?, ?, ?, ?, ?)""",
-            (
-                source["group_id"],
-                str(mirrored.id),
-                str(mirrored.parent_id),
-                str(thread.parent_id),
-                str(thread.id),
-            ),
-        )
-        db.commit()
-        log.info("THREAD-MIRROR", f"Mapped original starter thread {mirrored.id} -> relayed starter thread {thread.id}")
-        return True
+        await self.thread_sync.handle_thread_delete(thread)
 
     async def _relay_to_target(
         self,
@@ -599,78 +465,6 @@ class RelayCog(commands.Cog):
             **thread_route,
         }
         await relay_queue.add(target["webhook_url"], payload, meta, files=files_for_upload)
-
-    def _track_filter_violation(
-        self, db: DatabaseManager, message: Message,
-        source: dict, group: dict, f: dict, exec_id: str,
-    ):
-        db.execute(
-            """INSERT INTO user_warnings (group_id, user_id, filter_id, warning_count, last_violation_at)
-               VALUES (?, ?, ?, 1, ?)
-               ON CONFLICT(group_id, user_id, filter_id) DO UPDATE SET
-                   warning_count = warning_count + 1,
-                   last_violation_at = excluded.last_violation_at""",
-            (source["group_id"], str(message.author.id), f["filter_id"], int(datetime.now().timestamp())),
-        )
-        db.commit()
-
-        stats = db.fetchone(
-            "SELECT warning_count FROM user_warnings WHERE group_id = ? AND user_id = ? AND filter_id = ?",
-            (source["group_id"], str(message.author.id), f["filter_id"]),
-        )
-        wc = stats["warning_count"] if stats else 0
-        threshold = f["threshold"]
-
-        if threshold == 0:
-            return
-        elif threshold == 1:
-            db.execute(
-                """INSERT OR IGNORE INTO group_blacklist (group_id, blocked_id, type) VALUES (?, ?, 'USER')""",
-                (source["group_id"], str(message.author.id)),
-            )
-            db.commit()
-            return
-        elif wc >= threshold:
-            db.execute(
-                """INSERT OR IGNORE INTO group_blacklist (group_id, blocked_id, type) VALUES (?, ?, 'USER')""",
-                (source["group_id"], str(message.author.id)),
-            )
-            db.commit()
-            asyncio.create_task(self._notify_ban(message, group, f, threshold))
-            return
-        else:
-            remaining = threshold - wc
-            asyncio.create_task(self._send_warning(
-                message, message.author.id,
-                f"⚠️ **Warning:** {f['warning_msg'] or 'Inappropriate language'}\n"
-                f"Phrase: ||{f['phrase']}||\nStrikes: {wc}/{threshold} ({remaining} left).",
-            ))
-
-    async def _send_warning(self, destination, user_id: int, text: str):
-        try:
-            user = await self.bot.fetch_user(user_id)
-            await user.send(f"⚠️ **Relay Warning**\nServer: {destination.guild.name}\n{text}")
-        except Exception:
-            try:
-                msg = await destination.channel.send(f"<@{user_id}> {text}")
-                await asyncio.sleep(15)
-                await msg.delete()
-            except Exception:
-                pass
-
-    async def _notify_ban(self, message: Message, group: dict, f: dict, threshold: int):
-        await self._send_warning(
-            message, message.author.id,
-            f"🚫 **You have been blocked from the relay group.**\n"
-            f"Reason: Repeated use of prohibited phrase: ||{f['phrase']}||",
-        )
-        await notify_admins(
-            self.bot, "🚫 成員被自動封鎖",
-            f"**使用者：** {message.author}（{message.author.id}）\n"
-            f"**伺服器：** {message.guild.name}\n"
-            f"**群組：** {group['group_name']}\n"
-            f"**原因：** 觸發過濾器「{f['phrase']}」達上限（{threshold} 次）",
-        )
 
     # ------------------------------------------------------------------
     # Admin commands
