@@ -250,6 +250,8 @@ class RelayCog(commands.Cog):
         relay_queue.cancel(original_message_id)
 
         db = DatabaseManager()
+        await self._mark_replied_message_deleted(db, original_message_id)
+
         src = db.fetchone(
             "SELECT allow_forward_delete FROM linked_channels WHERE channel_id = ?",
             (configured_channel_id_for_stored_channel(db, channel_id),),
@@ -297,6 +299,46 @@ class RelayCog(commands.Cog):
 
         log.info("DEL-FWD", f"Deleted {deleted}/{len(relayed)} relayed copies for {original_message_id}; failed={failed}")
         return True
+
+    async def _mark_replied_message_deleted(self, db: DatabaseManager, original_message_id: str) -> None:
+        replies = db.fetchall(
+            """SELECT relayed_message_id, relayed_channel_id
+               FROM relayed_messages
+               WHERE replied_to_id = ?""",
+            (original_message_id,),
+        )
+        if not replies:
+            return
+
+        deleted_embed = self._build_reply_embed(None, deleted=True)
+        for row in replies:
+            try:
+                cfg_id = configured_channel_id_for_stored_channel(db, row["relayed_channel_id"])
+                link = db.fetchone(
+                    "SELECT webhook_url FROM linked_channels WHERE channel_id = ?",
+                    (cfg_id,),
+                )
+                if not link or not link["webhook_url"]:
+                    continue
+                wh = discord.Webhook.from_url(
+                    link["webhook_url"],
+                    session=self.bot.http._HTTPClient__session,
+                )
+                msg = await wh.fetch_message(int(row["relayed_message_id"]))
+                embeds = list(msg.embeds)
+                if embeds:
+                    embeds[0] = deleted_embed
+                else:
+                    embeds = [deleted_embed]
+                thread = webhook_thread_for_stored_channel(db, row["relayed_channel_id"])
+                kwargs = {"embeds": embeds, "allowed_mentions": discord.AllowedMentions.none()}
+                if thread:
+                    kwargs["thread"] = thread
+                await wh.edit_message(int(row["relayed_message_id"]), **kwargs)
+            except discord.NotFound:
+                pass
+            except Exception as exc:
+                log.warn("REPLY-DEL", f"Failed to update reply embed {row['relayed_message_id']}: {exc}")
 
     def _delete_relay_record(self, db: DatabaseManager, original_message_id: str, relayed_message_id: str) -> None:
         db.execute(
@@ -613,10 +655,7 @@ class RelayCog(commands.Cog):
                 )
                 link = f"https://discord.com/channels/{target['guild_id']}/{target['channel_id']}/{copy['relayed_message_id']}" if copy else str(replied.jump_url)
 
-                reply_embed = Embed(color=0xB0B8C6, description=rc)
-                reply_embed.set_author(
-                    name=f"Replying to {ra}", url=link, icon_url=replied.author.display_avatar.url,
-                )
+                reply_embed = self._build_reply_embed(replied, link, deleted=False)
         # Role mention mapping
         target_content = original.content or ""
         target_guild = self.bot.get_guild(int(target["guild_id"]))
@@ -785,6 +824,31 @@ class RelayCog(commands.Cog):
             **thread_route,
         }
         await relay_queue.add(target["webhook_url"], payload, meta, files=files_for_upload)
+
+    def _build_reply_embed(self, replied: Message | None, link: str | None = None, deleted: bool = False) -> Embed:
+        if deleted or replied is None:
+            return Embed(color=0xB0B8C6, description="*原始訊息已刪除*")
+
+        reply_text = (replied.content or "*(No text)*")[:1000]
+        if replied.edited_at:
+            reply_text += " *(edited)*"
+
+        attachments = list(replied.attachments)
+        first_image = next((att for att in attachments if self._is_image_attachment(att)), None)
+        other_attachments = [att for att in attachments if att is not first_image]
+        if other_attachments:
+            links = "\n".join(att.url.split("?")[0] for att in other_attachments)
+            reply_text = f"{reply_text}\n\n{links}"[:4096]
+
+        reply_embed = Embed(color=0xB0B8C6, description=reply_text)
+        reply_embed.set_author(
+            name=f"Replying to {replied.author.display_name}",
+            url=link,
+            icon_url=replied.author.display_avatar.url,
+        )
+        if first_image:
+            reply_embed.set_image(url=first_image.url)
+        return reply_embed
 
     def _strip_embed_urls_from_content(self, content: str, embeds: list) -> str:
         """Remove bare URLs from content that are already represented as rich embeds."""
