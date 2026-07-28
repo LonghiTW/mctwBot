@@ -827,7 +827,7 @@ class RelayCog(commands.Cog):
 
     def _build_reply_embed(self, replied: Message | None, link: str | None = None, deleted: bool = False) -> Embed:
         if deleted or replied is None:
-            return Embed(color=0xB0B8C6, description="*原始訊息已刪除*")
+            return Embed(color=0xB0B8C6, description="*↰ original message was deleted*")
 
         reply_text = (replied.content or "*(No text)*")[:1000]
         if replied.edited_at:
@@ -1201,6 +1201,28 @@ class RelayCog(commands.Cog):
             return author.guild_permissions.manage_guild or author.guild_permissions.administrator
         return False
 
+    def _format_channel_link(self, guild_id: str, channel_id: str) -> str:
+        guild_name = str(guild_id)
+        channel_name = str(channel_id)
+
+        try:
+            guild = self.bot.get_guild(int(guild_id))
+            if guild:
+                guild_name = guild.name
+                channel = guild.get_channel(int(channel_id))
+                if channel:
+                    channel_name = channel.name
+            else:
+                channel = self.bot.get_channel(int(channel_id))
+                if channel:
+                    channel_name = channel.name
+                    if getattr(channel, "guild", None):
+                        guild_name = channel.guild.name
+        except Exception:
+            pass
+
+        return f"[{guild_name}/{channel_name}](https://discord.com/channels/{guild_id}/{channel_id})"
+
     # ------------------------------------------------------------------
     # on_bot_reload — react to config reload (diff + notifications)
     # ------------------------------------------------------------------
@@ -1240,10 +1262,10 @@ class RelayCog(commands.Cog):
             msg_parts = [f"**{gname} 頻道更新**"]
             for cid in sorted(added):
                 gid = channel_guild.get(cid, "?")
-                msg_parts.append(f"  ➕ 新增 https://discord.com/channels/{gid}/{cid}")
+                msg_parts.append(f"  ➕ 新增 {self._format_channel_link(gid, cid)}")
             for cid in sorted(removed):
                 gid = channel_guild.get(cid, "?")
-                msg_parts.append(f"  ➖ 移除 https://discord.com/channels/{gid}/{cid}")
+                msg_parts.append(f"  ➖ 移除 {self._format_channel_link(gid, cid)}")
             notify_text = "\n".join(msg_parts)
 
             for cid in kept:
@@ -1262,7 +1284,7 @@ class RelayCog(commands.Cog):
             # Welcome new channels
             for cid in sorted(added):
                 others = [
-                    f"https://discord.com/channels/{channel_guild.get(oc, '?')}/{oc}"
+                    self._format_channel_link(channel_guild.get(oc, "?"), oc)
                     for oc in sorted(new_set) if oc != cid
                 ]
                 other_text = "、".join(others) if others else "無"
@@ -1321,7 +1343,7 @@ class RelayCog(commands.Cog):
             for i, ch in enumerate(channels):
                 prefix = "  └" if i == len(channels) - 1 else "  ├"
                 d = "🔄" if ch["direction"] == "BOTH" else ("📤" if ch["direction"] == "SEND_ONLY" else "📥")
-                lines.append(f"{prefix} {d} https://discord.com/channels/{ch['guild_id']}/{ch['channel_id']}")
+                lines.append(f"{prefix} {d} {self._format_channel_link(ch['guild_id'], ch['channel_id'])}")
 
             lines.append("")
 
