@@ -25,10 +25,14 @@ cp .env.example .env
 
 # 3. 建立設定檔
 cp config.json.example config.json
-# 編輯 config.json，填入頻道 ID 與功能設定
+# 編輯 config.json，填入 bot profiles 與 relay 等全域設定
 
 # 4. 啟動
 python run.py
+
+# 5. 單服功能設定
+# 首次啟動後會自動在 config.guilds/ 產生各伺服器 ID 的設定檔
+# 也可以參考 config.guild.json.example 手動建立
 ```
 
 ## 設定檔說明
@@ -41,9 +45,12 @@ python run.py
 | `BOT_TOKEN_OPS` | `ops` bot profile 的 Token（範例，可自行改名） |
 | `RELAY_QUEUE_DELAY_MS` | Webhook 發送間隔毫秒（預設 600） |
 | `CONFIG_PATH` | 設定檔路徑（預設 `config.json`） |
+| `GUILD_CONFIG_DIR` | 單服設定檔目錄（預設 `config.guilds`） |
 | `DATABASE_PATH` | SQLite 資料庫路徑（預設 `data/database.db`） |
 
-### `config.json` — 功能設定
+### `config.json` — 全域功能設定
+
+`config.json` 控制 bot profile、全域管理員、通知與跨服 relay。單一伺服器功能（keywords、scheduler、moderation）的細項設定不放在這裡，改由 `config.guilds/{guild_id}.json` 控制。
 
 #### `notifications`
 
@@ -99,7 +106,7 @@ python run.py
 
 `relay` 同一時間只能在一個 profile 啟用，避免多個 bot 同時處理同一批中繼事件。
 
-`features` 使用大分類控制 Cog 載入，所有功能預設都是 `false`，需要的模組必須在各 profile 中明確啟用。細項設定放在各分類自己的區塊，例如 `moderation.welcome_cleaner`。
+`features` 使用大分類控制 Cog 載入，所有功能預設都是 `false`，需要的模組必須在各 profile 中明確啟用。`relay`、`commands`、`admin` 是全域功能；`keywords`、`scheduler`、`moderation` 啟用後，仍會再依每個伺服器的 `config.guilds/{guild_id}.json` 決定是否執行。
 
 > `commands` 目前只載入 `ping`；`admin` 是獨立 feature，專門處理管理員功能。
 
@@ -147,9 +154,33 @@ Admin 類功能目前提供 JSON 訊息控制，只有 `admin.user_ids` 內的�
 
 `source` 會輸出指定訊息的 JSON，方便複製後微調再用 `edit`。`announce` 會把同一份 JSON 發送到指定 relay group 的所有一般文字頻道，論壇頻道會略過。`edit` / `delete` 只會操作同一隻 bot 自己發出的訊息。
 
+### `config.guilds/{guild_id}.json` — 單服功能設定
+
+首次啟動時，bot 會依目前加入的伺服器自動產生對應檔案，例如：
+
+```text
+config.guilds/
+  123456789012345678.json
+  987654321098765432.json
+```
+
+這些檔案是 runtime 設定，預設不進 git。格式可參考 [config.guild.json.example](config.guild.json.example)。
+
+#### `features`
+
+每個伺服器可以獨立開關單服功能。即使 profile 已載入 Cog，這裡關閉後該伺服器也不會執行該功能。
+
+```json
+"features": {
+  "keywords": true,
+  "scheduler": false,
+  "moderation": false
+}
+```
+
 #### `keywords`
 
-Keywords 類功能的細項設定（需在 profile 開啟 `keywords`）：
+Keywords 類功能的細項設定（需在 profile 與此伺服器都開啟 `keywords`）：
 
 ```json
 "keywords": {
@@ -164,7 +195,7 @@ Keywords 類功能的細項設定（需在 profile 開啟 `keywords`）：
 
 #### `moderation`
 
-Moderation 類功能的細項設定（需在 profile 開啟 `moderation`）：
+Moderation 類功能的細項設定（需在 profile 與此伺服器都開啟 `moderation`）：
 
 ```json
 "moderation": {
@@ -177,7 +208,7 @@ Moderation 類功能的細項設定（需在 profile 開啟 `moderation`）：
 
 #### `scheduler`
 
-Scheduler 類功能的細項設定（需在 profile 開啟 `scheduler`）：
+Scheduler 類功能的細項設定（需在 profile 與此伺服器都開啟 `scheduler`）：
 
 ```json
 "scheduler": {
@@ -255,7 +286,9 @@ Bot/
 │   ├── bot_profiles.py      ← 多 bot token profile 載入與驗證
 │   ├── config.py            ← 讀取 .env
 │   ├── config_validator.py  ← 啟動早期驗證 config.json
-│   └── config_sync.py       ← 讀取 config.json → SQLite
+│   ├── config_sync.py       ← 讀取 config.json → SQLite
+│   └── guild_config.py      ← 單服功能設定載入、驗證與自動生成
+├── config.guilds/       ← 單服 runtime 設定檔（不進 git）
 ├── data/                ← SQLite runtime 檔案（不進 git）
 ├── database/
 │   └── database.py      ← SQLite + migration
@@ -278,5 +311,6 @@ Bot/
 - Relay 功能只能在一個 bot profile 啟用
 - 同步副本會保留使用者、身分組、頻道標註，但不會觸發 ping；只有原始訊息所在頻道會通知
 - 圖片附件會以圖片預覽 embed 同步；非圖片附件仍以連結同步
-- 啟動時會先驗證 `config.json`，設定格式錯誤會直接中止啟動
-- 設定檔修改後需重啟 bot 才會生效
+- 啟動時會先驗證 `config.json`，並在 bot ready 後補齊 `config.guilds/{guild_id}.json`
+- `config.json` 只放全域設定；`keywords`、`scheduler`、`moderation` 細項請放在單服設定檔
+- 修改設定後可用 `!reload` 重新載入 `config.json`、同步 relay，並清除/重讀單服設定快取
