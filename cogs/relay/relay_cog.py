@@ -20,7 +20,6 @@ from utils.time_utils import snowflake_before
 from utils.admin_notifier import notify_admins
 from app.config_sync import sync_configured_relays, load_config
 from .queue import relay_queue
-from .webhook import WebhookManager
 from .routing import (
     linked_channel_id_for_message,
     configured_channel_id_for_stored_channel,
@@ -54,7 +53,7 @@ class RelayCog(commands.Cog):
 
     def __init__(self, bot: commands.Bot):
         self.bot = bot
-        self.webhook_manager = WebhookManager()
+        relay_queue.set_client(bot)
         self._recently_deleted: set[str] = set()
 
     # ------------------------------------------------------------------
@@ -821,6 +820,7 @@ class RelayCog(commands.Cog):
             "execution_id": exec_id,
             "replied_to_id": str(original.reference.message_id) if original.reference and not is_forward else None,
             "group_id": target["group_id"],
+            "group_name": group["group_name"],
             **thread_route,
         }
         await relay_queue.add(target["webhook_url"], payload, meta, files=files_for_upload)

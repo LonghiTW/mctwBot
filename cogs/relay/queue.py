@@ -1,12 +1,14 @@
 """Async webhook relay queue — parallel workers to avoid head-of-line blocking."""
 import asyncio
 import json
+import time
 
 import aiohttp
 
 from database import DatabaseManager
 from utils.log_manager import LogManager
 from app.config import RELAY_QUEUE_DELAY_MS, RELAY_QUEUE_WORKERS
+from .webhook import WebhookManager
 
 log = LogManager
 
@@ -21,12 +23,28 @@ class RelayQueue:
         self._worker_count = workers
         self._tasks: list[asyncio.Task] = []
         self._session: aiohttp.ClientSession | None = None
-        self._cancelled: set[str] = set()
+        self._client = None
+        self._webhook_manager = WebhookManager()
+        self._cancelled: dict[str, float] = {}
+        self._cancel_ttl = 60
         self._last_send: dict[str, float] = {}  # webhook_url -> last send timestamp
+
+    def set_client(self, client) -> None:
+        self._client = client
 
     def cancel(self, original_msg_id: str) -> None:
         """Mark an original message as cancelled (deleted) so queued sends are skipped."""
-        self._cancelled.add(original_msg_id)
+        self._cancelled[original_msg_id] = time.monotonic() + self._cancel_ttl
+
+    def _is_cancelled(self, original_msg_id: str) -> bool:
+        self._purge_cancelled()
+        return original_msg_id in self._cancelled
+
+    def _purge_cancelled(self) -> None:
+        now = time.monotonic()
+        expired = [msg_id for msg_id, expires_at in self._cancelled.items() if expires_at <= now]
+        for msg_id in expired:
+            self._cancelled.pop(msg_id, None)
 
     async def start(self):
         if self._session is None:
@@ -57,8 +75,7 @@ class RelayQueue:
         while True:
             item = await self._queue.get()
             original_msg_id = item.get("meta", {}).get("original_msg_id", "")
-            if original_msg_id and original_msg_id in self._cancelled:
-                self._cancelled.discard(original_msg_id)
+            if original_msg_id and self._is_cancelled(original_msg_id):
                 log.info("QUEUE-SKIP", f"Original {original_msg_id} deleted, skipping queued send")
                 continue
             try:
@@ -129,6 +146,19 @@ class RelayQueue:
                         )
                         db.commit()
                         log.warn("THREAD-MAP", f"Removed stale thread mapping {meta['target_thread_id']}", exec_id)
+                        return
+                    if resp.status in (401, 403, 404) and self._client and meta.get("target_channel_id"):
+                        repaired = await self._webhook_manager.handle_invalid_webhook(
+                            self._client,
+                            str(meta["target_channel_id"]),
+                            str(meta.get("group_name", "Unknown")),
+                        )
+                        if repaired and attempt < self._max_retries:
+                            item["webhook_url"] = repaired.url
+                            item["attempt"] += 1
+                            await self._queue.put(item)
+                            log.info("QUEUE-REPAIR", f"Repaired webhook and requeued {meta.get('target_channel_id')}", exec_id)
+                            return
                     return
 
                 data = await resp.json()
@@ -188,7 +218,7 @@ class RelayQueue:
 
                 # Post-send cancel check: if original was marked deleted while
                 # this webhook was in-flight, immediately delete what we just sent.
-                if relayed_id and meta.get("original_msg_id", "") in self._cancelled:
+                if relayed_id and self._is_cancelled(meta.get("original_msg_id", "")):
                     log.info(
                         "QUEUE-CANCEL",
                         f"Original {meta['original_msg_id']} deleted during send, deleting {relayed_id}",

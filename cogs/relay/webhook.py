@@ -55,9 +55,11 @@ class WebhookManager:
             except Exception:
                 pass
             try:
-                DatabaseManager().execute(
+                db = DatabaseManager()
+                db.execute(
                     "DELETE FROM linked_channels WHERE channel_id = ?", (channel_id,)
-                ).commit()
+                )
+                db.commit()
             except Exception:
                 pass
             return None
