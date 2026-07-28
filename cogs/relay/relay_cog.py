@@ -22,7 +22,6 @@ from .queue import relay_queue
 from .routing import (
     linked_channel_id_for_message,
     configured_channel_id_for_stored_channel,
-    webhook_thread_for_stored_channel,
     prepare_thread_route,
 )
 from .rendering import (
@@ -34,6 +33,8 @@ from .rendering import (
 )
 from .reactions import ReactionSync
 from .emoji_resolver import EmojiResolver
+from .message_sync import MessageSync
+from .edit_sync import EditSync
 
 log = LogManager
 
@@ -57,7 +58,8 @@ class RelayCog(commands.Cog):
         relay_queue.set_client(bot)
         self.emoji_resolver = EmojiResolver(bot)
         self.reactions = ReactionSync(bot, self.emoji_resolver.resolve_reaction)
-        self._recently_deleted: set[str] = set()
+        self.message_sync = MessageSync(bot)
+        self.edit_sync = EditSync(bot, self.emoji_resolver.resolve_content)
 
     # ------------------------------------------------------------------
     # on_ready — sync config and prune DB
@@ -199,10 +201,10 @@ class RelayCog(commands.Cog):
         if not message.guild:
             return
         if message.webhook_id:
-            await self._sync_reverse_delete(str(message.id))
+            await self.message_sync.sync_reverse_delete(str(message.id))
             return
 
-        await self._sync_forward_delete(
+        await self.message_sync.sync_forward_delete(
             str(message.id),
             linked_channel_id_for_message(message),
         )
@@ -213,246 +215,16 @@ class RelayCog(commands.Cog):
             return
         message_id = str(payload.message_id)
         channel_id = str(payload.channel_id)
-        if await self._sync_reverse_delete(message_id):
+        if await self.message_sync.sync_reverse_delete(message_id):
             return
-        await self._sync_forward_delete(message_id, channel_id)
-
-    async def _sync_reverse_delete(self, relayed_message_id: str) -> bool:
-        db = DatabaseManager()
-        link = db.fetchone(
-            """SELECT original_message_id, original_channel_id
-               FROM relayed_messages WHERE relayed_message_id = ?""",
-            (relayed_message_id,),
-        )
-        if not link:
-            return False
-        orig_cfg = configured_channel_id_for_stored_channel(db, link["original_channel_id"])
-        src = db.fetchone(
-            "SELECT allow_reverse_delete FROM linked_channels WHERE channel_id = ?",
-            (orig_cfg,),
-        )
-        if not src or not src["allow_reverse_delete"]:
-            return True
-        try:
-            ch = await self.bot.fetch_channel(int(link["original_channel_id"]))
-            orig = await ch.fetch_message(int(link["original_message_id"]))
-            await orig.delete()
-        except Exception:
-            pass
-        return True
-
-    async def _sync_forward_delete(self, original_message_id: str, channel_id: str) -> bool:
-        # Dedup: skip if we already processed this deletion
-        if original_message_id in self._recently_deleted:
-            return True
-        self._recently_deleted.add(original_message_id)
-        asyncio.get_running_loop().call_later(5, self._recently_deleted.discard, original_message_id)
-
-        # Cancel any queued-but-not-yet-sent webhook payloads for this message
-        relay_queue.cancel(original_message_id)
-
-        db = DatabaseManager()
-        await self._mark_replied_message_deleted(db, original_message_id)
-
-        src = db.fetchone(
-            "SELECT allow_forward_delete FROM linked_channels WHERE channel_id = ?",
-            (configured_channel_id_for_stored_channel(db, channel_id),),
-        )
-        if not src or not src["allow_forward_delete"]:
-            return False
-
-        relayed = db.fetchall(
-            "SELECT relayed_message_id, relayed_channel_id FROM relayed_messages WHERE original_message_id = ?",
-            (original_message_id,),
-        )
-        if not relayed:
-            return False
-
-        deleted = 0
-        failed = 0
-        for row in relayed:
-            relayed_message_id = str(row["relayed_message_id"])
-            try:
-                cfg_id = configured_channel_id_for_stored_channel(db, row["relayed_channel_id"])
-                link = db.fetchone(
-                    "SELECT webhook_url FROM linked_channels WHERE channel_id = ?", (cfg_id,)
-                )
-                if not link or not link["webhook_url"]:
-                    failed += 1
-                    log.warn("DEL-FWD", f"Missing webhook for relayed channel {row['relayed_channel_id']} (cfg {cfg_id})")
-                    continue
-                wh = discord.Webhook.from_url(
-                    link["webhook_url"],
-                    session=self.bot.http._HTTPClient__session,
-                )
-                thread = webhook_thread_for_stored_channel(db, row["relayed_channel_id"])
-                if thread:
-                    await wh.delete_message(int(relayed_message_id), thread=thread)
-                else:
-                    await wh.delete_message(int(relayed_message_id))
-                deleted += 1
-                self._delete_relay_record(db, original_message_id, relayed_message_id)
-            except discord.NotFound:
-                deleted += 1
-                self._delete_relay_record(db, original_message_id, relayed_message_id)
-            except Exception as exc:
-                failed += 1
-                log.warn("DEL-FWD", f"Delete failed {relayed_message_id} in {row['relayed_channel_id']}: {exc}")
-
-        log.info("DEL-FWD", f"Deleted {deleted}/{len(relayed)} relayed copies for {original_message_id}; failed={failed}")
-        return True
-
-    async def _mark_replied_message_deleted(self, db: DatabaseManager, original_message_id: str) -> None:
-        replies = db.fetchall(
-            """SELECT relayed_message_id, relayed_channel_id
-               FROM relayed_messages
-               WHERE replied_to_id = ?""",
-            (original_message_id,),
-        )
-        if not replies:
-            return
-
-        deleted_embed = build_reply_embed(None, deleted=True)
-        for row in replies:
-            try:
-                cfg_id = configured_channel_id_for_stored_channel(db, row["relayed_channel_id"])
-                link = db.fetchone(
-                    "SELECT webhook_url FROM linked_channels WHERE channel_id = ?",
-                    (cfg_id,),
-                )
-                if not link or not link["webhook_url"]:
-                    continue
-                wh = discord.Webhook.from_url(
-                    link["webhook_url"],
-                    session=self.bot.http._HTTPClient__session,
-                )
-                msg = await wh.fetch_message(int(row["relayed_message_id"]))
-                embeds = list(msg.embeds)
-                if embeds:
-                    embeds[0] = deleted_embed
-                else:
-                    embeds = [deleted_embed]
-                thread = webhook_thread_for_stored_channel(db, row["relayed_channel_id"])
-                kwargs = {"embeds": embeds, "allowed_mentions": discord.AllowedMentions.none()}
-                if thread:
-                    kwargs["thread"] = thread
-                await wh.edit_message(int(row["relayed_message_id"]), **kwargs)
-            except discord.NotFound:
-                pass
-            except Exception as exc:
-                log.warn("REPLY-DEL", f"Failed to update reply embed {row['relayed_message_id']}: {exc}")
-
-    def _delete_relay_record(self, db: DatabaseManager, original_message_id: str, relayed_message_id: str) -> None:
-        db.execute(
-            """DELETE FROM relayed_messages
-               WHERE original_message_id = ? AND relayed_message_id = ?""",
-            (original_message_id, relayed_message_id),
-        )
-        db.commit()
+        await self.message_sync.sync_forward_delete(message_id, channel_id)
 
     # ------------------------------------------------------------------
     # on_message_edit — edit sync
     # ------------------------------------------------------------------
     @commands.Cog.listener()
     async def on_message_edit(self, before: Message, after: Message):
-        message = after
-        if not message.guild:
-            return
-        if message.type not in _RELAY_MESSAGE_TYPES:
-            return
-        if message.author.id == self.bot.user.id:
-            return
-        if message.webhook_id and message.application_id == self.bot.user.id:
-            return
-
-        db = DatabaseManager()
-        link = db.fetchone(
-            "SELECT 1 FROM relayed_messages WHERE original_message_id = ? LIMIT 1",
-            (str(message.id),),
-        )
-        if not link:
-            return
-
-        source = db.fetchone(
-            "SELECT * FROM linked_channels WHERE channel_id = ?",
-            (linked_channel_id_for_message(message),),
-        )
-        if not source:
-            return
-        if not source["process_bot_messages"] and (message.author.bot or message.webhook_id):
-            return
-
-        group = db.fetchone("SELECT * FROM relay_groups WHERE group_id = ?", (source["group_id"],))
-        is_owner = group and group["owner_user_id"] and str(message.author.id) == group["owner_user_id"]
-
-        final_content = message.content or ""
-        if final_content and not is_owner:
-            filters = db.fetchall("SELECT phrase FROM group_filters WHERE group_id = ?", (source["group_id"],))
-            for f in filters:
-                final_content = re.sub(rf"\b{re.escape(f['phrase'])}\b", "***", final_content, flags=re.IGNORECASE)
-
-        sender_name = message.author.display_name
-        server_brand = source["brand_name"] or message.guild.name
-        username = f"{sender_name} ({server_brand})"
-        if len(username) > _MAX_USERNAME_LENGTH:
-            username = username[:_MAX_USERNAME_LENGTH - 3] + "..."
-
-        if len(final_content) > _DISCORD_MSG_LIMIT:
-            final_content = final_content[:_DISCORD_MSG_LIMIT - 50] + "...(truncated)"
-
-        payload_embeds = []
-        for emb in message.embeds:
-            clean = Embed(
-                title=emb.title,
-                description=emb.description[:4096] if emb.description else None,
-                color=emb.color, url=emb.url, timestamp=emb.timestamp,
-            )
-            if emb.author:
-                clean.set_author(name=emb.author.name, url=emb.author.url, icon_url=emb.author.icon_url)
-            if emb.footer:
-                clean.set_footer(text=emb.footer.text, icon_url=emb.footer.icon_url)
-            if emb.image:
-                clean.set_image(url=emb.image.url)
-            if emb.thumbnail:
-                clean.set_thumbnail(url=emb.thumbnail.url)
-            if emb.fields:
-                for field in emb.fields:
-                    clean.add_field(name=field.name, value=field.value, inline=field.inline)
-            payload_embeds.append(clean)
-        final_content, payload_embeds = await resolve_klipy_urls(final_content, payload_embeds)
-        final_content = strip_embed_urls_from_content(final_content, message.embeds)
-        final_content, payload_embeds = await self.emoji_resolver.resolve_content(final_content, payload_embeds)
-        final_content, _ = append_attachment_previews(final_content, payload_embeds, message.attachments)
-
-        relayed = db.fetchall(
-            "SELECT relayed_message_id, relayed_channel_id FROM relayed_messages WHERE original_message_id = ?",
-            (str(message.id),),
-        )
-        for row in relayed:
-            try:
-                cfg_id = configured_channel_id_for_stored_channel(db, row["relayed_channel_id"])
-                link_info = db.fetchone(
-                    "SELECT webhook_url, guild_id FROM linked_channels WHERE channel_id = ?", (cfg_id,)
-                )
-                if not link_info or not link_info["webhook_url"]:
-                    continue
-                wh = discord.Webhook.from_url(
-                    link_info["webhook_url"],
-                    session=self.bot.http._HTTPClient__session,
-                )
-                thread = webhook_thread_for_stored_channel(db, row["relayed_channel_id"])
-                edit_kwargs = {
-                    "content": final_content,
-                    "embeds": payload_embeds,
-                    "allowed_mentions": discord.AllowedMentions.none(),
-                }
-                if thread:
-                    edit_kwargs["thread"] = thread
-                await wh.edit_message(int(row["relayed_message_id"]), **edit_kwargs)
-            except discord.NotFound:
-                pass
-            except Exception as exc:
-                log.error("EDIT", f"Failed {row['relayed_message_id']}: {exc}")
+        await self.edit_sync.sync_edit(after, _RELAY_MESSAGE_TYPES)
 
     # ------------------------------------------------------------------
     # on_thread_create — auto-join threads so relay can see their messages
