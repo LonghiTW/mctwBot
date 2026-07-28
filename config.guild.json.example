@@ -1,0 +1,32 @@
+{
+  "guild_id": "123456789012345678",
+  "features": {
+    "keywords": true,
+    "scheduler": false,
+    "moderation": false
+  },
+  "keywords": {
+    "hello": {
+      "enabled": true
+    },
+    "birthday": {
+      "enabled": true
+    }
+  },
+  "moderation": {
+    "welcome_cleaner": {
+      "enabled": true,
+      "channels": []
+    }
+  },
+  "scheduler": {
+    "friday_night": {
+      "enabled": true,
+      "channels": []
+    },
+    "sunday_night": {
+      "enabled": true,
+      "channels": []
+    }
+  }
+}

@@ -18,6 +18,7 @@ def validate_config(config: dict) -> None:
     _validate_id_list(admin.get("user_ids", []), "admin.user_ids", errors)
     _validate_id_list(notifications.get("admin_user_ids", []), "notifications.admin_user_ids", errors)
     _validate_bots(config.get("bots", []), errors)
+    _validate_global_feature_config(config, errors)
     _validate_relay(config.get("relay", {}), errors)
 
     if errors:
@@ -66,6 +67,13 @@ def _validate_bots(bots: object, errors: list[str]) -> None:
 
     if len(relay_profiles) > 1:
         errors.append("Only one bot profile may enable relay: " + ", ".join(relay_profiles) + ".")
+
+
+def _validate_global_feature_config(config: dict, errors: list[str]) -> None:
+    for feature in ("keywords", "scheduler", "moderation"):
+        value = config.get(feature, {})
+        if value not in ({}, None):
+            errors.append(f"{feature} settings moved to config.guilds/<guild_id>.json.")
 
 
 def _validate_relay(relay: object, errors: list[str]) -> None:

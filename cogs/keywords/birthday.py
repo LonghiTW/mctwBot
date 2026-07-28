@@ -4,6 +4,8 @@ import random
 
 from discord.ext import commands
 
+from app.guild_config import guild_configs
+
 
 class BirthdayResponder(commands.Cog):
     def __init__(self, bot):
@@ -21,6 +23,8 @@ class BirthdayResponder(commands.Cog):
         if message.author.bot:
             return
         if message.guild is None:
+            return
+        if not guild_configs.module_enabled(message.guild.id, "keywords", "birthday"):
             return
 
         today = datetime.date.today()

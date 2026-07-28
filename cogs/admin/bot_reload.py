@@ -10,6 +10,7 @@ from database import DatabaseManager
 from utils.log_manager import LogManager
 from utils.time_utils import snowflake_before
 from app.config_sync import sync_configured_relays, load_config
+from app.guild_config import guild_configs
 
 log = LogManager
 
@@ -47,6 +48,8 @@ class BotReload(commands.Cog):
             )
 
             # Perform sync
+            guild_configs.reload()
+            guild_configs.ensure_all(self.bot.guilds)
             await sync_configured_relays(self.bot)
 
             # Snapshot DB state after sync

@@ -8,6 +8,7 @@ from discord.ext import commands
 from app.bot_profiles import BotProfile, load_bot_profiles, validate_bot_profiles
 from app.config_validator import validate_config
 from app.config_sync import load_config
+from app.guild_config import guild_configs
 from database import DatabaseManager
 from utils.log_manager import LogManager
 from utils.admin_notifier import notify_admins
@@ -63,6 +64,7 @@ def create_bot(profile: BotProfile) -> commands.Bot:
 def register_events(bot: commands.Bot, profile: BotProfile) -> None:
     @bot.event
     async def on_ready():
+        guild_configs.ensure_all(bot.guilds)
         log.info("MAIN", f"[{profile.id}] Bot logged in as {bot.user} (ID: {bot.user.id})")
 
     @bot.event

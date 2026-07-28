@@ -5,6 +5,8 @@ import re
 
 from discord.ext import commands
 
+from app.guild_config import guild_configs
+
 
 class HelloResponder(commands.Cog):
     def __init__(self, bot):
@@ -26,6 +28,10 @@ class HelloResponder(commands.Cog):
     @commands.Cog.listener()
     async def on_message(self, message):
         if message.author.bot:
+            return
+        if message.guild is None:
+            return
+        if not guild_configs.module_enabled(message.guild.id, "keywords", "hello"):
             return
 
         today = datetime.date.today()

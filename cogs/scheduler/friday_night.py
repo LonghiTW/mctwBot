@@ -9,7 +9,7 @@ from astral import LocationInfo
 from discord import TextChannel
 from discord.ext import commands
 
-from app.config_sync import load_config
+from app.guild_config import guild_configs
 
 
 class FridayNight(commands.Cog):
@@ -22,11 +22,7 @@ class FridayNight(commands.Cog):
         self.scheduler.start()
 
     def _get_channels(self) -> list[int]:
-        cfg = load_config()
-        friday_night = cfg.get("scheduler", {}).get("friday_night", {})
-        if "channels" in friday_night:
-            return friday_night.get("channels", [])
-        return cfg.get("scheduler_channels", {}).get("friday_night", [])
+        return guild_configs.enabled_channels_for_bot(self.bot, "scheduler", "friday_night")
 
     def schedule_next_friday(self):
         today = datetime.now(self.tz).date()

@@ -7,7 +7,7 @@ Discord's system welcome messages (sent by system, not bot). Now uses
 import discord
 from discord.ext import commands
 
-from app.config_sync import load_config
+from app.guild_config import guild_configs
 
 
 class WelcomeCleaner(commands.Cog):
@@ -16,20 +16,17 @@ class WelcomeCleaner(commands.Cog):
         # (guild_id, user_id) → {message_id, channel_id}
         self.welcome_messages: dict = {}
 
-    def _get_channels(self) -> set[int]:
-        cfg = load_config()
-        moderation = cfg.get("moderation", {})
-        welcome_cleaner = moderation.get("welcome_cleaner", {})
-        if "channels" in welcome_cleaner:
-            return set(welcome_cleaner.get("channels", []))
-        return set(cfg.get("welcome_channels", []))
+    def _get_channels(self, guild_id: int) -> set[int]:
+        return set(guild_configs.channels_for(guild_id, "moderation", "welcome_cleaner"))
 
     @commands.Cog.listener()
     async def on_message(self, message: discord.Message):
         # ✅ Bug fix: use message.type, not message.author.bot
         if message.type != discord.MessageType.new_member:
             return
-        if message.channel.id not in self._get_channels():
+        if message.guild is None:
+            return
+        if message.channel.id not in self._get_channels(message.guild.id):
             return
         if len(message.mentions) != 1:
             return

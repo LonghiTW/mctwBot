@@ -15,6 +15,9 @@ data/
 *.db-wal
 *.db-shm
 
+# Runtime-generated per-guild config
+config.guilds/
+
 # IDE
 .vscode/
 # Logs

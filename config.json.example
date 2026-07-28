@@ -38,33 +38,6 @@
 
   "commands": {},
 
-  "keywords": {
-    "hello": {
-      "enabled": true
-    },
-    "birthday": {
-      "enabled": true
-    }
-  },
-
-  "moderation": {
-    "welcome_cleaner": {
-      "enabled": true,
-      "channels": []
-    }
-  },
-
-  "scheduler": {
-    "friday_night": {
-      "enabled": true,
-      "channels": []
-    },
-    "sunday_night": {
-      "enabled": true,
-      "channels": []
-    }
-  },
-
   "relay": {
     "prune_days": 7,
     "emoji_cache_guild_id": "",
