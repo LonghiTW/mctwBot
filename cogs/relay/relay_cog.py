@@ -32,6 +32,7 @@ from .rendering import (
     resolve_klipy_urls,
     strip_embed_urls_from_content,
 )
+from .reactions import ReactionSync
 
 log = LogManager
 
@@ -56,6 +57,7 @@ class RelayCog(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
         relay_queue.set_client(bot)
+        self.reactions = ReactionSync(bot, self._resolve_reaction_emoji)
         self._recently_deleted: set[str] = set()
 
     # ------------------------------------------------------------------
@@ -1211,75 +1213,14 @@ class RelayCog(commands.Cog):
         """Sync a reaction added to a relayed message across all copies."""
         if payload.user_id == self.bot.user.id:
             return
-        await self._sync_reaction(payload, add=True)
+        await self.reactions.sync(payload, add=True)
 
     @commands.Cog.listener()
     async def on_raw_reaction_remove(self, payload: discord.RawReactionActionEvent):
         """Sync a reaction removed from a relayed message across all copies."""
         if payload.user_id == self.bot.user.id:
             return
-        await self._sync_reaction(payload, add=False)
-
-    async def _sync_reaction(self, payload: discord.RawReactionActionEvent, add: bool):
-        """Core reaction sync: find all copies of the message and mirror the reaction."""
-        db = DatabaseManager()
-        message_id = str(payload.message_id)
-        channel_id = str(payload.channel_id)
-
-        # Case 1: This message is the original — find all relayed copies
-        copies = db.fetchall(
-            "SELECT relayed_message_id, relayed_channel_id FROM relayed_messages WHERE original_message_id = ?",
-            (message_id,),
-        )
-
-        # Case 2: This message is a relayed copy — find the original
-        original = db.fetchone(
-            "SELECT original_message_id, original_channel_id FROM relayed_messages WHERE relayed_message_id = ?",
-            (message_id,),
-        )
-
-        if not copies and not original:
-            return
-
-        # Deduplicate targets and exclude the source channel
-        targets: set[tuple[str, str]] = set()
-        for row in copies:
-            targets.add((row["relayed_message_id"], row["relayed_channel_id"]))
-        if original:
-            targets.add((original["original_message_id"], original["original_channel_id"]))
-        targets.discard((message_id, channel_id))
-
-        if not targets:
-            return
-
-        # Resolve emoji
-        resolved: discord.PartialEmoji | str | None = None
-        emoji = payload.emoji
-        if emoji.id is None:
-            resolved = str(emoji)  # Unicode emoji
-        else:
-            # Custom emoji — attempt cache guild resolution for cross-server rendering
-            resolved = await self._resolve_reaction_emoji(emoji)
-        if resolved is None:
-            return
-
-        for target_mid, target_cid in targets:
-            ch = self.bot.get_channel(int(target_cid))
-            if ch is None:
-                try:
-                    ch = await self.bot.fetch_channel(int(target_cid))
-                except Exception:
-                    continue
-            try:
-                msg = await ch.fetch_message(int(target_mid))
-                if add:
-                    await msg.add_reaction(resolved)
-                else:
-                    # The reaction was added by the bot during add-sync,
-                    # so remove the bot's own reaction (not the user's).
-                    await msg.remove_reaction(resolved, discord.Object(id=self.bot.user.id))
-            except (discord.NotFound, discord.Forbidden, discord.HTTPException) as exc:
-                log.warn("REACTION-SYNC", f"Failed to {'add' if add else 'remove'} reaction on {target_mid}: {exc}")
+        await self.reactions.sync(payload, add=False)
 
     async def _resolve_reaction_emoji(self, emoji: discord.PartialEmoji) -> discord.PartialEmoji | str:
         """Resolve a custom emoji for cross-server reaction use via cache guild.
