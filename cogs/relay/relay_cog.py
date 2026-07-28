@@ -10,10 +10,9 @@ from datetime import datetime
 
 import aiohttp
 import discord
-from discord import Message, Embed, TextChannel
+from discord import Message, Embed
 from discord.ext import commands
 
-from app.config import RELAY_QUEUE_DELAY_MS
 from database import DatabaseManager
 from utils.log_manager import LogManager
 from utils.time_utils import snowflake_before
@@ -26,16 +25,19 @@ from .routing import (
     webhook_thread_for_stored_channel,
     prepare_thread_route,
 )
+from .rendering import (
+    append_attachment_previews,
+    build_reply_embed,
+    format_referenced_message_text,
+    resolve_klipy_urls,
+    strip_embed_urls_from_content,
+)
 
 log = LogManager
 
 _MAX_USERNAME_LENGTH = 80
 _DISCORD_MSG_LIMIT = 2000
-_MAX_EMBEDS = 10
 _NO_MENTIONS = {"parse": []}
-
-# Regex to detect Klipy GIF URLs that Discord didn't auto-embed
-_KLiPY_RE = re.compile(r'https?://(?:www\.)?klipy\.com/gifs/\S+', re.IGNORECASE)
 
 # Regex to match custom emoji from other servers (Nitro)
 _CUSTOM_EMOJI_RE = re.compile(r'<(a?):(\w+):(\d+)>')
@@ -309,7 +311,7 @@ class RelayCog(commands.Cog):
         if not replies:
             return
 
-        deleted_embed = self._build_reply_embed(None, deleted=True)
+        deleted_embed = build_reply_embed(None, deleted=True)
         for row in replies:
             try:
                 cfg_id = configured_channel_id_for_stored_channel(db, row["relayed_channel_id"])
@@ -416,10 +418,10 @@ class RelayCog(commands.Cog):
                 for field in emb.fields:
                     clean.add_field(name=field.name, value=field.value, inline=field.inline)
             payload_embeds.append(clean)
-        final_content, payload_embeds = await self._resolve_klipy_urls(final_content, payload_embeds)
-        final_content = self._strip_embed_urls_from_content(final_content, message.embeds)
+        final_content, payload_embeds = await resolve_klipy_urls(final_content, payload_embeds)
+        final_content = strip_embed_urls_from_content(final_content, message.embeds)
         final_content, payload_embeds = await self._resolve_custom_emojis(final_content, payload_embeds)
-        final_content, _ = self._append_attachment_previews(final_content, payload_embeds, message.attachments)
+        final_content, _ = append_attachment_previews(final_content, payload_embeds, message.attachments)
 
         relayed = db.fetchall(
             "SELECT relayed_message_id, relayed_channel_id FROM relayed_messages WHERE original_message_id = ?",
@@ -654,7 +656,7 @@ class RelayCog(commands.Cog):
                 )
                 link = f"https://discord.com/channels/{target['guild_id']}/{target['channel_id']}/{copy['relayed_message_id']}" if copy else str(replied.jump_url)
 
-                reply_embed = self._build_reply_embed(replied, link, deleted=False)
+                reply_embed = build_reply_embed(replied, link, deleted=False)
         # Role mention mapping
         target_content = original.content or ""
         target_guild = self.bot.get_guild(int(target["guild_id"]))
@@ -714,7 +716,7 @@ class RelayCog(commands.Cog):
         snapshot_attachments = []
         if original.message_snapshots:
             snap = original.message_snapshots[0]
-            forward_text = f"↱ {self._format_referenced_message_text(snap.content, snap.attachments)}"
+            forward_text = f"↱ {format_referenced_message_text(snap.content, snap.attachments)}"
             ref = original.reference
             ref_guild_id = getattr(ref, "guild_id", None) or original.guild.id
             ref_channel_id = getattr(ref, "channel_id", None)
@@ -764,12 +766,12 @@ class RelayCog(commands.Cog):
                 for f in emb.fields:
                     clean.add_field(name=f.name, value=f.value, inline=f.inline)
             payload_embeds.append(clean)
-        payload_content, payload_embeds = await self._resolve_klipy_urls(payload_content, payload_embeds)
-        payload_content = self._strip_embed_urls_from_content(payload_content, original.embeds)
+        payload_content, payload_embeds = await resolve_klipy_urls(payload_content, payload_embeds)
+        payload_content = strip_embed_urls_from_content(payload_content, original.embeds)
         target_guild = self.bot.get_guild(int(target["guild_id"]))
         payload_content, payload_embeds = await self._resolve_custom_emojis(payload_content, payload_embeds, target_guild)
         all_attachments = list(original.attachments) + snapshot_attachments
-        payload_content, relay_files = self._append_attachment_previews(payload_content, payload_embeds, all_attachments)
+        payload_content, relay_files = append_attachment_previews(payload_content, payload_embeds, all_attachments)
 
         # Download images for multipart upload (grid layout), fallback to URL on failure
         files_for_upload: list[dict] = []
@@ -824,167 +826,6 @@ class RelayCog(commands.Cog):
             **thread_route,
         }
         await relay_queue.add(target["webhook_url"], payload, meta, files=files_for_upload)
-
-    def _build_reply_embed(self, replied: Message | None, link: str | None = None, deleted: bool = False) -> Embed:
-        if deleted or replied is None:
-            return Embed(color=0xB0B8C6, description="*↰ original message was deleted*")
-
-        if replied.message_snapshots:
-            snap = replied.message_snapshots[0]
-            reply_text = f"↱ {self._format_referenced_message_text(snap.content, snap.attachments)}"[:1000]
-        else:
-            reply_text = self._format_referenced_message_text(replied.content, replied.attachments)[:1000]
-        if replied.edited_at:
-            reply_text += " *(edited)*"
-
-        reply_embed = Embed(color=0xB0B8C6, description=reply_text)
-        reply_embed.set_author(
-            name=f"Replying to {replied.author.display_name}",
-            url=link,
-            icon_url=replied.author.display_avatar.url,
-        )
-        return reply_embed
-
-    def _format_referenced_message_text(self, content: str | None, attachments) -> str:
-        text = (content or "").strip()
-        if attachments:
-            return f"🔗 {text}" if text else "🔗 click to see attachment"
-        return text or "*(No text)*"
-
-    def _strip_embed_urls_from_content(self, content: str, embeds: list) -> str:
-        """Remove bare URLs from content that are already represented as rich embeds."""
-        embed_urls: set[str] = set()
-        for emb in embeds:
-            if emb.url:
-                embed_urls.add(emb.url.rstrip("/"))
-            if emb.image and emb.image.url:
-                embed_urls.add(emb.image.url.rstrip("/"))
-            if emb.thumbnail and emb.thumbnail.url:
-                embed_urls.add(emb.thumbnail.url.rstrip("/"))
-        if not embed_urls:
-            return content
-        for url in sorted(embed_urls, key=len, reverse=True):
-            if _KLiPY_RE.fullmatch(url):
-                continue
-            escaped = re.escape(url)
-            content = re.sub(rf"\s*{escaped}\s*", " ", content).strip()
-            content = re.sub(r"\s+", " ", content)
-        return content
-
-    def _append_attachment_previews(self, content: str, embeds: list, attachments) -> tuple[str, list]:
-        """Return (content, image_files).
-
-        Image attachments are returned as a list of download items for multipart
-        upload (grid layout). Non-image attachments and overflow are appended
-        as plain URLs in content.
-        """
-        image_files: list[dict] = []
-        overflow: list[str] = []
-        for att in attachments:
-            if self._is_image_attachment(att) and len(image_files) < 10:
-                image_files.append({
-                    "filename": att.filename,
-                    "url": att.url,  # full signed URL for download
-                    "content_type": att.content_type or "image/png",
-                })
-                continue
-
-            line = f"\n{att.url.split('?')[0]}"
-            if len(content) + len(line) <= _DISCORD_MSG_LIMIT - 50:
-                content += line
-            else:
-                overflow.append(att.filename)
-
-        if overflow:
-            content += f"\n*(Note: {len(overflow)} file(s) too large: {', '.join(overflow)})*"
-        return content, image_files
-
-    async def _resolve_klipy_urls(self, content: str, embeds: list) -> tuple[str, list]:
-        """Find Klipy GIF URLs in content, fetch the actual GIF, add as embeds.
-
-        Discord's GIF picker sometimes sends Klipy links without an embed.
-        This fetches the og:image from the Klipy page so we can embed it.
-        """
-        urls = _KLiPY_RE.findall(content)
-        if not urls:
-            return content, embeds
-
-        # Build set of already-embedded image URLs to avoid dupes
-        existing: set[str] = set()
-        for e in embeds:
-            img = getattr(e, "image", None)
-            if img and img.url:
-                existing.add(img.url.rstrip("/"))
-
-        new_embeds = list(embeds)
-        resolved: set[str] = set()
-        async with aiohttp.ClientSession() as session:
-            for url in urls:
-                clean_url = url.rstrip("/")
-                if clean_url in existing:
-                    resolved.add(clean_url)
-                    continue
-                try:
-                    async with session.get(
-                        url, timeout=aiohttp.ClientTimeout(total=5)
-                    ) as resp:
-                        if resp.status != 200:
-                            continue
-                        html = await resp.text()
-                        # Try standard og:image
-                        gif_url = None
-                        m = re.search(
-                            r'<meta\s+property="og:image"\s+content="([^"]+)"',
-                            html, re.IGNORECASE,
-                        )
-                        if m:
-                            gif_url = m.group(1)
-                        else:
-                            # Try reversed attribute order
-                            m = re.search(
-                                r'<meta\s+content="([^"]+)"\s+property="og:image"',
-                                html, re.IGNORECASE,
-                            )
-                            if m:
-                                gif_url = m.group(1)
-                        if gif_url and len(new_embeds) < _MAX_EMBEDS:
-                            # Klipy sometimes serves og:image as .mp4 — Discord
-                            # can't auto-play MP4 in an embed image field.
-                            # Try to find a static image version instead.
-                            if gif_url.lower().endswith('.mp4'):
-                                found = False
-                                for ext in ('.gif', '.png', '.webp'):
-                                    test_url = re.sub(r'\.mp4$', ext, gif_url, flags=re.IGNORECASE)
-                                    try:
-                                        async with session.head(
-                                            test_url,
-                                            timeout=aiohttp.ClientTimeout(total=3),
-                                        ) as tresp:
-                                            if tresp.status == 200:
-                                                gif_url = test_url
-                                                found = True
-                                                break
-                                    except Exception:
-                                        continue
-                                if not found:
-                                    # No static version — keep original URL in content
-                                    continue
-                            embed = Embed(color=0x2B2D31)
-                            embed.set_image(url=gif_url)
-                            new_embeds.append(embed)
-                            existing.add(gif_url.rstrip("/"))
-                            resolved.add(clean_url)
-                except Exception:
-                    pass
-
-        # Only strip Klipy URLs that were successfully resolved
-        for url in urls:
-            clean_url = url.rstrip("/")
-            if clean_url in resolved:
-                content = content.replace(url, "").strip()
-        content = re.sub(r"\s+", " ", content).strip()
-
-        return content, new_embeds
 
     async def _ensure_emoji_cached(self, source_emoji_id: str, animated: bool, source_name: str) -> str | None:
         """Upload an external emoji to the cache guild and return the cached emoji id, or None on failure."""
@@ -1103,13 +944,6 @@ class RelayCog(commands.Cog):
                 content = content[:start] + new_text + content[end:]
 
         return content, embeds
-
-    def _is_image_attachment(self, attachment) -> bool:
-        content_type = getattr(attachment, "content_type", None) or ""
-        if content_type.startswith("image/"):
-            return True
-        filename = getattr(attachment, "filename", "").lower()
-        return filename.endswith((".png", ".jpg", ".jpeg", ".gif", ".webp"))
 
     def _track_filter_violation(
         self, db: DatabaseManager, message: Message,
