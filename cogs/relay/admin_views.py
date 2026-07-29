@@ -98,10 +98,10 @@ class RelayAdminViews:
                     self.format_channel_link(channel_guild.get(other_id, "?"), other_id)
                     for other_id in sorted(new_set) if other_id != channel_id
                 ]
-                other_text = "、".join(others) if others else "無"
+                other_text = "\n".join(f"- {other}" for other in others) if others else "無"
                 welcome = (
                     f"👋 此頻道已加入麥塊聯盟的群組 **{group_name}**。\n"
-                    f"群組內其他頻道：{other_text}"
+                    f"群組內的其他頻道：\n{other_text}"
                 )
                 welcome_messages.append((channel_id, welcome))
 

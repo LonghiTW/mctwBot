@@ -36,6 +36,24 @@ class RelayAdminViewsTests(unittest.TestCase):
             "[123](https://discord.com/channels/123/456)",
         )
 
+    def test_reload_welcome_uses_vertical_channel_list(self):
+        views = RelayAdminViews(_Bot())
+
+        _updates, welcomes = views.build_reload_notifications(
+            [],
+            [
+                {"group_name": "main", "channel_id": "456", "guild_id": "123"},
+                {"group_name": "main", "channel_id": "789", "guild_id": "123"},
+            ],
+        )
+
+        self.assertEqual(
+            welcomes[0][1],
+            "👋 此頻道已加入麥塊聯盟的群組 **main**。\n"
+            "群組內的其他頻道：\n"
+            "- [Panda Server](https://discord.com/channels/123/789)",
+        )
+
 
 if __name__ == "__main__":
     unittest.main()
