@@ -1,8 +1,20 @@
 """Admin-facing relay list and reload notification formatting."""
+import re
+
 import discord
 
 from app.config_sync import load_config
 from database import DatabaseManager
+
+_EMOJI_RE = re.compile(
+    "["
+    "\U0001F000-\U0001FAFF"
+    "\U00002700-\U000027BF"
+    "\U00002600-\U000026FF"
+    "\U0001F1E6-\U0001F1FF"
+    "\u200d\ufe0f"
+    "]+"
+)
 
 
 class RelayAdminViews:
@@ -38,6 +50,7 @@ class RelayAdminViews:
         except Exception:
             pass
 
+        guild_name = _strip_emoji(guild_name) or str(guild_id)
         return f"[{guild_name}](https://discord.com/channels/{guild_id}/{channel_id})"
 
     def build_reload_notifications(self, old_rows: list[dict], new_rows: list[dict]) -> tuple[list[tuple[str, str]], list[tuple[str, str]]]:
@@ -153,3 +166,7 @@ class RelayAdminViews:
         if current:
             chunks.append(current)
         return chunks
+
+
+def _strip_emoji(value: str) -> str:
+    return re.sub(r"\s+", " ", _EMOJI_RE.sub("", value)).strip()
