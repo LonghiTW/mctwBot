@@ -264,6 +264,9 @@ class EmojiResolver:
             if self._is_cache_guild_emoji(emoji_id):
                 continue
 
+            if self._is_known_bot_emoji(emoji_id) and _bot_can_use_external_emojis(target_guild):
+                continue
+
             cached_id = await self.ensure_cached(emoji_id, animated, name)
             if cached_id:
                 new_code = f"<a:{name}:{cached_id}>" if animated else f"<:{name}:{cached_id}>"
@@ -277,7 +280,10 @@ class EmojiResolver:
         return content, embeds
 
     def _is_cache_guild_emoji(self, emoji_id: str) -> bool:
-        config = load_config()
+        try:
+            config = load_config()
+        except Exception:
+            return False
         cache_guild_id = config.get("relay", {}).get("emoji_cache_guild_id", "")
         if not cache_guild_id:
             return False
@@ -285,6 +291,12 @@ class EmojiResolver:
         if cache_guild is None:
             return False
         return emoji_id in {str(emoji.id) for emoji in cache_guild.emojis}
+
+    def _is_known_bot_emoji(self, emoji_id: str) -> bool:
+        for guild in getattr(self.bot, "guilds", []):
+            if emoji_id in {str(emoji.id) for emoji in getattr(guild, "emojis", [])}:
+                return True
+        return False
 
     async def resolve_reaction(self, emoji: discord.PartialEmoji) -> discord.PartialEmoji | str:
         """Resolve a custom reaction emoji via the cache guild when needed."""
@@ -317,3 +329,11 @@ def _emoji_slots_remaining(cache_guild: discord.Guild, animated: bool) -> int:
     limit = getattr(cache_guild, "emoji_limit", 50)
     used = sum(1 for emoji in cache_guild.emojis if bool(getattr(emoji, "animated", False)) == animated)
     return max(0, limit - used)
+
+
+def _bot_can_use_external_emojis(guild: discord.Guild) -> bool:
+    bot_member = getattr(guild, "me", None)
+    if bot_member is None:
+        return False
+    permissions = getattr(bot_member, "guild_permissions", None)
+    return bool(permissions and permissions.external_emojis)

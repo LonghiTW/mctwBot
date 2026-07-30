@@ -83,6 +83,46 @@ class EmojiResolverHelperTests(unittest.TestCase):
         self.assertEqual(content, "<:relay_lul_345678:123456789012345678>")
         self.assertEqual(embeds, [])
 
+    def test_resolve_content_uses_known_cross_guild_emoji_when_allowed(self):
+        emoji = SimpleNamespace(id=123456789012345678, animated=False)
+        source_guild = SimpleNamespace(emojis=[emoji])
+        target_guild = SimpleNamespace(
+            emojis=[],
+            me=SimpleNamespace(guild_permissions=SimpleNamespace(external_emojis=True)),
+        )
+        bot = SimpleNamespace(guilds=[source_guild], get_guild=lambda guild_id: None)
+        resolver = EmojiResolver(bot)
+
+        async def fail_if_called(*args, **kwargs):
+            raise AssertionError("ensure_cached should not be called for known cross-guild emoji")
+
+        resolver.ensure_cached = fail_if_called
+
+        content, embeds = asyncio.run(resolver.resolve_content("<:panda:123456789012345678>", [], target_guild))
+
+        self.assertEqual(content, "<:panda:123456789012345678>")
+        self.assertEqual(embeds, [])
+
+    def test_resolve_content_caches_known_cross_guild_emoji_without_permission(self):
+        emoji = SimpleNamespace(id=123456789012345678, animated=False)
+        source_guild = SimpleNamespace(emojis=[emoji])
+        target_guild = SimpleNamespace(
+            emojis=[],
+            me=SimpleNamespace(guild_permissions=SimpleNamespace(external_emojis=False)),
+        )
+        bot = SimpleNamespace(guilds=[source_guild], get_guild=lambda guild_id: None)
+        resolver = EmojiResolver(bot)
+
+        async def fake_cached(*args, **kwargs):
+            return "987654321098765432"
+
+        resolver.ensure_cached = fake_cached
+
+        content, embeds = asyncio.run(resolver.resolve_content("<:panda:123456789012345678>", [], target_guild))
+
+        self.assertEqual(content, "<:panda:987654321098765432>")
+        self.assertEqual(embeds, [])
+
     def test_sync_cache_index_removes_stale_rows_and_orphans(self):
         active = _FakeEmoji(1, "relay_keep_000001")
         orphan = _FakeEmoji(3, "relay_orphan_000003")
