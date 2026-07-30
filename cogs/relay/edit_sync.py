@@ -89,15 +89,22 @@ class EditSync:
             payload_embeds.append(clean)
         final_content, payload_embeds = await resolve_klipy_urls(final_content, payload_embeds)
         final_content = strip_embed_urls_from_content(final_content, message.embeds)
-        final_content, payload_embeds = await self._resolve_emojis(final_content, payload_embeds, None)
         final_content, _ = append_attachment_previews(final_content, payload_embeds, message.attachments)
 
         relayed = store.relayed_for_original(str(message.id))
         for row in relayed:
             try:
+                target_channel = self.bot.get_channel(int(row["relayed_channel_id"]))
+                if target_channel is None:
+                    try:
+                        target_channel = await self.bot.fetch_channel(int(row["relayed_channel_id"]))
+                    except Exception:
+                        target_channel = None
+                target_guild = getattr(target_channel, "guild", None) if target_channel else None
+                edit_content, edit_embeds = await self._resolve_emojis(final_content, list(payload_embeds), target_guild)
                 edit_kwargs = {
-                    "content": final_content,
-                    "embeds": payload_embeds,
+                    "content": edit_content,
+                    "embeds": edit_embeds,
                     "allowed_mentions": discord.AllowedMentions.none(),
                 }
                 await self.webhooks.edit_message(db, row["relayed_channel_id"], row["relayed_message_id"], **edit_kwargs)
