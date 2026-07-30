@@ -209,6 +209,15 @@ class EmojiResolver:
         )
         db.commit()
 
+    def _source_for_cached_emoji(self, cached_emoji_id: str):
+        db = DatabaseManager()
+        return db.fetchone(
+            """SELECT source_emoji_id, cached_name, animated
+               FROM relay_emoji_cache
+               WHERE cached_emoji_id = ?""",
+            (cached_emoji_id,),
+        )
+
     async def _evict_until_headroom(self, db: DatabaseManager, cache_guild: discord.Guild, animated: bool) -> None:
         while _emoji_slots_remaining(cache_guild, animated) <= _CACHE_EMOJI_HEADROOM:
             if not await self._evict_one(db, cache_guild, animated):
@@ -293,15 +302,37 @@ class EmojiResolver:
         return emoji_id in {str(emoji.id) for emoji in cache_guild.emojis}
 
     def _is_known_bot_emoji(self, emoji_id: str) -> bool:
-        for guild in getattr(self.bot, "guilds", []):
-            if emoji_id in {str(emoji.id) for emoji in getattr(guild, "emojis", [])}:
-                return True
-        return False
+        return self._known_bot_emoji(emoji_id) is not None
 
-    async def resolve_reaction(self, emoji: discord.PartialEmoji) -> discord.PartialEmoji | str:
+    def _known_bot_emoji(self, emoji_id: str):
+        for guild in getattr(self.bot, "guilds", []):
+            for emoji in getattr(guild, "emojis", []):
+                if str(emoji.id) == emoji_id:
+                    return emoji
+        return None
+
+    async def resolve_reaction(self, emoji: discord.PartialEmoji, target_guild: discord.Guild | None = None) -> discord.PartialEmoji | str:
         """Resolve a custom reaction emoji via the cache guild when needed."""
         if emoji.id is None:
             return str(emoji)
+
+        target_emoji_ids = {str(target_emoji.id) for target_emoji in getattr(target_guild, "emojis", [])}
+        if str(emoji.id) in target_emoji_ids:
+            return emoji
+
+        source = self._source_for_cached_emoji(str(emoji.id))
+        if source:
+            source_emoji = self._known_bot_emoji(str(source["source_emoji_id"]))
+            if source_emoji:
+                resolved = discord.PartialEmoji(name=source_emoji.name, animated=source_emoji.animated, id=source_emoji.id)
+                if str(source_emoji.id) in target_emoji_ids:
+                    return resolved
+                if target_guild is not None and _bot_can_use_external_emojis(target_guild):
+                    return resolved
+            return emoji
+
+        if target_guild is not None and self._is_known_bot_emoji(str(emoji.id)) and _bot_can_use_external_emojis(target_guild):
+            return emoji
 
         cached_id = await self.ensure_cached(str(emoji.id), emoji.animated, emoji.name)
         if cached_id:

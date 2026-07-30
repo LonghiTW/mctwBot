@@ -123,6 +123,32 @@ class EmojiResolverHelperTests(unittest.TestCase):
         self.assertEqual(content, "<:panda:987654321098765432>")
         self.assertEqual(embeds, [])
 
+    def test_resolve_reaction_maps_cached_emoji_back_to_source(self):
+        source_emoji = SimpleNamespace(id=123456789012345678, name="panda", animated=False)
+        bot = SimpleNamespace(guilds=[SimpleNamespace(emojis=[source_emoji])])
+        resolver = EmojiResolver(bot)
+        resolver._source_for_cached_emoji = lambda cached_id: {
+            "source_emoji_id": "123456789012345678",
+            "cached_name": "relay_panda_345678",
+            "animated": 0,
+        } if cached_id == "987654321098765432" else None
+
+        async def fail_if_called(*args, **kwargs):
+            raise AssertionError("ensure_cached should not be called for cached relay reaction")
+
+        resolver.ensure_cached = fail_if_called
+
+        target_guild = SimpleNamespace(emojis=[source_emoji])
+        resolved = asyncio.run(resolver.resolve_reaction(SimpleNamespace(
+            id=987654321098765432,
+            name="relay_panda_345678",
+            animated=False,
+        ), target_guild))
+
+        self.assertEqual(resolved.id, 123456789012345678)
+        self.assertEqual(resolved.name, "panda")
+        self.assertFalse(resolved.animated)
+
     def test_sync_cache_index_removes_stale_rows_and_orphans(self):
         active = _FakeEmoji(1, "relay_keep_000001")
         orphan = _FakeEmoji(3, "relay_orphan_000003")

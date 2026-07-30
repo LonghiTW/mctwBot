@@ -8,7 +8,7 @@ from utils.log_manager import LogManager
 
 log = LogManager
 
-EmojiResolver = Callable[[discord.PartialEmoji], Awaitable[discord.PartialEmoji | str]]
+EmojiResolver = Callable[[discord.PartialEmoji, discord.Guild | None], Awaitable[discord.PartialEmoji | str]]
 
 
 class ReactionSync:
@@ -45,10 +45,6 @@ class ReactionSync:
             return
 
         emoji = payload.emoji
-        resolved = str(emoji) if emoji.id is None else await self._resolve_emoji(emoji)
-        if resolved is None:
-            return
-
         for target_message_id, target_channel_id in targets:
             channel = self.bot.get_channel(int(target_channel_id))
             if channel is None:
@@ -57,6 +53,10 @@ class ReactionSync:
                 except Exception:
                     continue
             try:
+                target_guild = getattr(channel, "guild", None)
+                resolved = str(emoji) if emoji.id is None else await self._resolve_emoji(emoji, target_guild)
+                if resolved is None:
+                    continue
                 message = await channel.fetch_message(int(target_message_id))
                 if add:
                     await message.add_reaction(resolved)
