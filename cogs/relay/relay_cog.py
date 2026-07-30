@@ -275,11 +275,6 @@ class RelayCog(commands.Cog):
                 reply_embed = Embed(color=0xB0B8C6, description="*Replying to a deleted message.*")
 
             if replied:
-                ra = replied.author.display_name
-                rc = (replied.content or "*(No text)*")[:1000]
-                if replied.edited_at:
-                    rc += " *(edited)*"
-
                 db = DatabaseManager()
                 parent_rec = db.fetchone(
                     "SELECT original_message_id FROM relayed_messages WHERE relayed_message_id = ?",
