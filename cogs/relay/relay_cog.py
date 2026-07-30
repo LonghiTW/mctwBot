@@ -66,6 +66,7 @@ class RelayCog(commands.Cog):
         log.info("RELAY", f"RelayCog ready — {self.bot.user}")
         # Reload config from DB
         DatabaseManager()  # ensure migrations run
+        await self.emoji_resolver.sync_cache_index()
         await sync_configured_relays(self.bot)
         self._prune_old_messages()
 

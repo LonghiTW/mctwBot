@@ -22,6 +22,65 @@ class EmojiResolver:
         self.bot = bot
         self._locks: dict[str, asyncio.Lock] = {}
 
+    async def sync_cache_index(self) -> None:
+        """Reconcile relay emoji cache DB records with the cache guild on startup."""
+        config = load_config()
+        cache_guild_id = config.get("relay", {}).get("emoji_cache_guild_id", "")
+        if not cache_guild_id:
+            return
+
+        cache_guild = self.bot.get_guild(int(cache_guild_id))
+        if cache_guild is None:
+            try:
+                cache_guild = await self.bot.fetch_guild(int(cache_guild_id))
+            except Exception as exc:
+                log.warn("EMOJI-CACHE", f"Failed to fetch cache guild {cache_guild_id}: {exc}")
+                return
+
+        db = DatabaseManager()
+        rows = db.fetchall(
+            """SELECT source_emoji_id, cached_emoji_id, cached_name
+               FROM relay_emoji_cache
+               WHERE cache_guild_id = ?""",
+            (cache_guild_id,),
+        )
+        emoji_by_id = {str(emoji.id): emoji for emoji in cache_guild.emojis}
+
+        removed_rows = 0
+        active_cached_ids: set[str] = set()
+        for row in rows:
+            cached_id = str(row["cached_emoji_id"])
+            if cached_id in emoji_by_id:
+                active_cached_ids.add(cached_id)
+                continue
+            db.execute("DELETE FROM relay_emoji_cache WHERE source_emoji_id = ?", (row["source_emoji_id"],))
+            removed_rows += 1
+        if removed_rows:
+            db.commit()
+
+        orphan_deleted = 0
+        can_manage = bool(
+            getattr(cache_guild, "me", None)
+            and cache_guild.me.guild_permissions.manage_expressions
+        )
+        if can_manage:
+            for emoji in list(cache_guild.emojis):
+                emoji_id = str(emoji.id)
+                if emoji_id in active_cached_ids:
+                    continue
+                if not _CACHE_PREFIX_RE.match(emoji.name):
+                    continue
+                try:
+                    await emoji.delete(reason="Relay emoji cache orphan cleanup")
+                    orphan_deleted += 1
+                except Exception as exc:
+                    log.warn("EMOJI-CACHE", f"Failed to delete orphan relay emoji {emoji.name} ({emoji.id}): {exc}")
+
+        log.info(
+            "EMOJI-CACHE",
+            f"Synced cache index for {cache_guild_id}: removed_rows={removed_rows}, orphan_deleted={orphan_deleted}",
+        )
+
     async def ensure_cached(self, source_emoji_id: str, animated: bool, source_name: str) -> str | None:
         """Upload an external emoji to the cache guild and return the cached emoji id, or None on failure."""
         lock = self._locks.setdefault(source_emoji_id, asyncio.Lock())
