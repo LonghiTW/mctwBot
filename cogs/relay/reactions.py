@@ -34,27 +34,69 @@ class ReactionSync:
         if not copies and not original:
             return
 
-        targets: set[tuple[str, str]] = set()
+        # Collect every message in the group: the message where the event
+        # happened, all relayed copies, and (when the event landed on a copy)
+        # its siblings under the same original.
+        all_copies: set[tuple[str, str]] = set()
+        all_copies.add((message_id, channel_id))
         for row in copies:
-            targets.add((row["relayed_message_id"], row["relayed_channel_id"]))
+            all_copies.add((row["relayed_message_id"], row["relayed_channel_id"]))
 
         if original:
             # The reaction landed on a relayed copy — fan out to the original
             # and every sibling copy so the whole group stays in sync.
             root_id = original["original_message_id"]
-            targets.add((original["original_message_id"], original["original_channel_id"]))
+            all_copies.add((original["original_message_id"], original["original_channel_id"]))
             siblings = db.fetchall(
                 "SELECT relayed_message_id, relayed_channel_id FROM relayed_messages WHERE original_message_id = ?",
                 (root_id,),
             )
             for row in siblings:
-                targets.add((row["relayed_message_id"], row["relayed_channel_id"]))
-        targets.discard((message_id, channel_id))
+                all_copies.add((row["relayed_message_id"], row["relayed_channel_id"]))
+
+        if add:
+            # Don't add a duplicate reaction in the channel the user already reacted in.
+            targets = all_copies - {(message_id, channel_id)}
+        else:
+            # Also clean up the bot's own synced reaction on the event channel.
+            targets = all_copies
 
         if not targets:
             return
 
         emoji = payload.emoji
+
+        if not add:
+            # The bot's single reaction on each copy represents the whole group.
+            # Keep it while any real user still has the emoji on any copy; only
+            # tear it down once nobody has it anywhere.
+            still_active = False
+            for target_message_id, target_channel_id in all_copies:
+                channel = self.bot.get_channel(int(target_channel_id))
+                if channel is None:
+                    try:
+                        channel = await self.bot.fetch_channel(int(target_channel_id))
+                    except Exception:
+                        continue
+                try:
+                    target_guild = getattr(channel, "guild", None)
+                    resolved = str(emoji) if emoji.id is None else await self._resolve_emoji(emoji, target_guild)
+                    if resolved is None:
+                        continue
+                    message = await channel.fetch_message(int(target_message_id))
+                except (discord.NotFound, discord.Forbidden, discord.HTTPException):
+                    continue
+                for reaction in message.reactions:
+                    if reaction.emoji == resolved:
+                        if reaction.count - (1 if reaction.me else 0) > 0:
+                            still_active = True
+                        break
+                if still_active:
+                    break
+            if still_active:
+                log.info("REACTION-SYNC", f"Keep reactions on copies of {message_id}: users still have the emoji")
+                return
+
         for target_message_id, target_channel_id in targets:
             channel = self.bot.get_channel(int(target_channel_id))
             if channel is None:

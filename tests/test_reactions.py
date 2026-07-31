@@ -17,18 +17,29 @@ class _FakeDb:
         return None
 
 
+class _FakeReaction:
+    def __init__(self, emoji, count, me):
+        self.emoji = emoji
+        self.count = count
+        self.me = me
+
+
 class _FakeMessage:
-    def __init__(self):
-        self.reactions = []
+    def __init__(self, reactions=None):
+        self.reactions = list(reactions) if reactions else []
+        self.removed = []
 
     async def add_reaction(self, emoji):
         self.reactions.append(emoji)
 
+    async def remove_reaction(self, emoji, member):
+        self.removed.append(emoji)
+
 
 class _FakeChannel:
-    def __init__(self, guild):
+    def __init__(self, guild, message=None):
         self.guild = guild
-        self.message = _FakeMessage()
+        self.message = message if message is not None else _FakeMessage()
 
     async def fetch_message(self, message_id):
         return self.message
@@ -119,6 +130,93 @@ class ReactionSyncTests(unittest.TestCase):
         self.assertEqual(channels[20].message.reactions, [])
         self.assertEqual(channels[30].message.reactions, ["resolved-3"])
         self.assertEqual(channels[40].message.reactions, ["resolved-4"])
+
+    def test_remove_keeps_reaction_while_other_users_still_have_it(self):
+        emoji = SimpleNamespace(id=123, name="panda", animated=False)
+
+        class _Db:
+            def fetchall(self, query, params=()):
+                return [
+                    {"relayed_message_id": "200", "relayed_channel_id": "20"},
+                    {"relayed_message_id": "300", "relayed_channel_id": "30"},
+                ]
+
+            def fetchone(self, query, params=()):
+                return None
+
+        msg10 = _FakeMessage([_FakeReaction(emoji, count=1, me=True)])  # only bot left
+        msg20 = _FakeMessage([_FakeReaction(emoji, count=2, me=True)])  # bot + one user
+        msg30 = _FakeMessage([_FakeReaction(emoji, count=1, me=True)])  # only bot left
+        channels = {
+            10: _FakeChannel(SimpleNamespace(id=1), msg10),
+            20: _FakeChannel(SimpleNamespace(id=2), msg20),
+            30: _FakeChannel(SimpleNamespace(id=3), msg30),
+        }
+        bot = SimpleNamespace(
+            get_channel=lambda channel_id: channels[channel_id],
+            user=SimpleNamespace(id=999),
+        )
+
+        async def resolve_emoji(emoji, target_guild):
+            return emoji
+
+        payload = SimpleNamespace(message_id=100, channel_id=10, emoji=emoji)
+
+        original_database_manager = reactions.DatabaseManager
+        try:
+            reactions.DatabaseManager = lambda: _Db()
+            asyncio.run(ReactionSync(bot, resolve_emoji).sync(payload, add=False))
+        finally:
+            reactions.DatabaseManager = original_database_manager
+
+        # Channel 20 still has a real user reacted — nothing is removed anywhere.
+        self.assertEqual(msg10.removed, [])
+        self.assertEqual(msg20.removed, [])
+        self.assertEqual(msg30.removed, [])
+
+    def test_remove_clears_reactions_when_no_user_has_emoji_anymore(self):
+        emoji = SimpleNamespace(id=123, name="panda", animated=False)
+
+        class _Db:
+            def fetchall(self, query, params=()):
+                return [
+                    {"relayed_message_id": "200", "relayed_channel_id": "20"},
+                    {"relayed_message_id": "300", "relayed_channel_id": "30"},
+                ]
+
+            def fetchone(self, query, params=()):
+                return None
+
+        msg10 = _FakeMessage([_FakeReaction(emoji, count=1, me=True)])  # only bot
+        msg20 = _FakeMessage([])                                        # nobody
+        msg30 = _FakeMessage([_FakeReaction(emoji, count=1, me=True)])  # only bot
+        channels = {
+            10: _FakeChannel(SimpleNamespace(id=1), msg10),
+            20: _FakeChannel(SimpleNamespace(id=2), msg20),
+            30: _FakeChannel(SimpleNamespace(id=3), msg30),
+        }
+        bot = SimpleNamespace(
+            get_channel=lambda channel_id: channels[channel_id],
+            user=SimpleNamespace(id=999),
+        )
+
+        async def resolve_emoji(emoji, target_guild):
+            return emoji
+
+        payload = SimpleNamespace(message_id=100, channel_id=10, emoji=emoji)
+
+        original_database_manager = reactions.DatabaseManager
+        try:
+            reactions.DatabaseManager = lambda: _Db()
+            asyncio.run(ReactionSync(bot, resolve_emoji).sync(payload, add=False))
+        finally:
+            reactions.DatabaseManager = original_database_manager
+
+        # Everyone removed — the bot's synced reaction is torn down on all
+        # copies, including the event channel itself.
+        self.assertEqual(msg10.removed, [emoji])
+        self.assertEqual(msg20.removed, [emoji])
+        self.assertEqual(msg30.removed, [emoji])
 
 
 if __name__ == "__main__":
