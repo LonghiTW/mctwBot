@@ -37,8 +37,18 @@ class ReactionSync:
         targets: set[tuple[str, str]] = set()
         for row in copies:
             targets.add((row["relayed_message_id"], row["relayed_channel_id"]))
+
         if original:
+            # The reaction landed on a relayed copy — fan out to the original
+            # and every sibling copy so the whole group stays in sync.
+            root_id = original["original_message_id"]
             targets.add((original["original_message_id"], original["original_channel_id"]))
+            siblings = db.fetchall(
+                "SELECT relayed_message_id, relayed_channel_id FROM relayed_messages WHERE original_message_id = ?",
+                (root_id,),
+            )
+            for row in siblings:
+                targets.add((row["relayed_message_id"], row["relayed_channel_id"]))
         targets.discard((message_id, channel_id))
 
         if not targets:
