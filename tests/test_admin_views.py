@@ -1,7 +1,7 @@
 import unittest
 from types import SimpleNamespace
 
-from cogs.relay.admin_views import RelayAdminViews, _strip_emoji
+from cogs.relay.admin_views import RelayAdminViews, _strip_emoji, format_channel_link
 
 
 class _Bot:
@@ -15,6 +15,12 @@ class _Bot:
 class RelayAdminViewsTests(unittest.TestCase):
     def test_strip_emoji_removes_common_emoji(self):
         self.assertEqual(_strip_emoji("🐼 Panda Server ✨"), "Panda Server")
+
+    def test_module_level_format_channel_link(self):
+        self.assertEqual(
+            format_channel_link(_Bot(), "123", "456"),
+            "[Panda Server](https://discord.com/channels/123/456)",
+        )
 
     def test_format_channel_link_uses_clean_guild_name(self):
         views = RelayAdminViews(_Bot())

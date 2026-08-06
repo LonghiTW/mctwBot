@@ -19,7 +19,12 @@ log = LogManager
 FEATURE_EXTENSIONS = {
     "relay": ("cogs.relay.relay_cog", "cogs.relay.guild_tracker"),
     "commands": ("cogs.commands.ping",),
-    "admin": ("cogs.admin.message_control", "cogs.admin.bot_reload"),
+    "admin": (
+        "cogs.bot_admin.bot_reload",
+        "cogs.bot_admin.announce_control",
+        "cogs.guild_admin.message_control",
+        "cogs.guild_admin.relaylist",
+    ),
 }
 
 CONFIGURED_FEATURE_EXTENSIONS = {

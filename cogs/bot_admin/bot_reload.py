@@ -1,7 +1,8 @@
-"""Admin command to reload bot configuration without restart.
+"""Bot admin command to reload bot configuration without restart.
 
 Dispatches a custom ``on_bot_reload`` event so that other cogs
 (e.g. relay) can react to configuration changes independently.
+Restricted to bot_admins with the ``exclusive_command`` feature.
 """
 import discord
 from discord.ext import commands
@@ -9,6 +10,7 @@ from discord.ext import commands
 from database import DatabaseManager
 from utils.log_manager import LogManager
 from utils.time_utils import snowflake_before
+from app.bot_admins import bot_admin_has_feature
 from app.config_sync import sync_configured_relays, load_config
 from app.guild_config import guild_configs
 
@@ -25,8 +27,7 @@ class BotReload(commands.Cog):
     def _is_admin(self, member: discord.User | discord.Member | None) -> bool:
         if member is None:
             return False
-        admin_ids = {int(uid) for uid in load_config().get("admin", {}).get("user_ids", [])}
-        return member.id in admin_ids
+        return bot_admin_has_feature(member.id, "exclusive_command")
 
     # ------------------------------------------------------------------
     # !reload — reload config and dispatch event
@@ -35,7 +36,7 @@ class BotReload(commands.Cog):
     async def reload_bot(self, ctx: commands.Context):
         """重新載入 config.json 設定，不須重啟機器人。"""
         if not self._is_admin(ctx.author):
-            await ctx.send("❌ 只有 admin.user_ids 中的管理員才能使用此指令。")
+            await ctx.send("❌ 只有 bot_admins 且啟用 exclusive_command 的管理員才能使用此指令。")
             return
         try:
             db = DatabaseManager()

@@ -1,7 +1,7 @@
 """Guild tracker — detects when the bot is removed/kicked from a guild.
 
-Triggers an instant DM notification to admin_user_ids if the lost guild
-contained any relay-linked channels.
+Triggers an instant DM notification to bot admins with the ``notifications``
+feature if the lost guild contained any relay-linked channels.
 """
 import discord
 from discord.ext import commands
@@ -37,7 +37,7 @@ class GuildTracker(commands.Cog):
             log.info("GUILD", f"No relay channels found in guild {guild.id}, skipping notification.")
             return
 
-        # Notify admin_user_ids
+        # Notify bot admins with the notifications feature
         channel_mentions = "\n".join(f"  • <#{r['channel_id']}>（群組 **{r['group_name']}**）" for r in rows)
         message = (
             f"🤖 機器人已離開伺服器\n\n"

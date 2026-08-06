@@ -199,7 +199,7 @@ class RelayCog(commands.Cog):
         if not message.guild:
             return
         if message.webhook_id:
-            await self.message_sync.sync_reverse_delete(str(message.id))
+            await self.message_sync.sync_reverse_delete(str(message.id), guild=message.guild)
             return
 
         await self.message_sync.sync_forward_delete(
@@ -213,7 +213,8 @@ class RelayCog(commands.Cog):
             return
         message_id = str(payload.message_id)
         channel_id = str(payload.channel_id)
-        if await self.message_sync.sync_reverse_delete(message_id):
+        guild = self.bot.get_guild(payload.guild_id)
+        if await self.message_sync.sync_reverse_delete(message_id, guild=guild):
             return
         await self.message_sync.sync_forward_delete(message_id, channel_id)
 
@@ -371,21 +372,6 @@ class RelayCog(commands.Cog):
                     await channel.send(text)
                 except Exception:
                     pass
-
-    @commands.command(name="relaylist")
-    async def list_relays(self, ctx: commands.Context):
-        """列出所有中繼群組與所屬頻道／伺服器。"""
-        if not self.admin_views.can_view_relaylist(ctx.author):
-            await ctx.send("❌ 你沒有權限檢視中繼列表。僅限 admin.user_ids 或擁有「管理伺服器」權限者使用。")
-            return
-
-        chunks = self.admin_views.relaylist_chunks()
-        if not chunks:
-            await ctx.send("目前沒有設定任何中繼群組。")
-            return
-
-        for chunk in chunks:
-            await ctx.send(chunk)
 
     # ------------------------------------------------------------------
     # on_raw_reaction_add / remove — sync reactions across relay channels
