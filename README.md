@@ -11,7 +11,7 @@
 | **Scheduler** | 定時任務 — 週五日落 gif、週日 21:00 圖片 | ✅ 可關閉 |
 | **Moderation** | 頻道與成員管理，目前包含 Welcome Cleaner | ✅ 可關閉 |
 | **Commands** | 基本指令模組，目前包含 `!ping` | ✅ 可關閉 |
-| **Admin** | 管理員功能，目前包含 JSON 訊息控制 | ✅ 可關閉 |
+| **Admin** | 管理員功能 — bot 管理員指令（`!reload`、`!announce`）與 Discord 管理員指令（`!msg`、`!relaylist`） | ✅ 可關閉 |
 
 ## 快速開始
 
