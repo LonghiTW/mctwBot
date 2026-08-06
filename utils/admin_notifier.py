@@ -1,28 +1,13 @@
-"""DM notifications to configured administrators."""
-import json
-from pathlib import Path
-
-from app.config import CONFIG_PATH
+"""DM notifications to configured bot admins."""
+from app.bot_admins import bot_admin_ids_with_feature
 from .log_manager import LogManager
 
 log = LogManager
 
 
-def _resolve_path() -> Path:
-    p = Path(CONFIG_PATH)
-    return p if p.is_absolute() else Path.cwd() / p
-
-
 def load_admin_user_ids() -> list[str]:
-    path = _resolve_path()
-    if not path.exists():
-        return []
-    try:
-        with path.open("r", encoding="utf-8") as f:
-            config = json.load(f)
-            return config.get("notifications", {}).get("admin_user_ids", [])
-    except (json.JSONDecodeError, IOError):
-        return []
+    """User ids granted the ``notifications`` bot admin feature."""
+    return [str(uid) for uid in bot_admin_ids_with_feature("notifications")]
 
 
 async def notify_admins(client, title: str, message: str):

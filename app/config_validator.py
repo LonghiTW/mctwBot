@@ -1,6 +1,8 @@
 """Startup validation for config.json."""
 from __future__ import annotations
 
+from app.bot_admins import KNOWN_FEATURES as KNOWN_BOT_ADMIN_FEATURES
+
 KNOWN_FEATURES = {"relay", "keywords", "scheduler", "moderation", "commands", "admin"}
 VALID_DIRECTIONS = {"BOTH", "SEND_ONLY", "RECEIVE_ONLY"}
 
@@ -17,12 +19,50 @@ def validate_config(config: dict) -> None:
     notifications = _object_or_empty(config.get("notifications", {}), "notifications", errors)
     _validate_id_list(admin.get("user_ids", []), "admin.user_ids", errors)
     _validate_id_list(notifications.get("admin_user_ids", []), "notifications.admin_user_ids", errors)
+    _validate_bot_admins(config.get("bot_admins", []), errors)
     _validate_bots(config.get("bots", []), errors)
     _validate_global_feature_config(config, errors)
     _validate_relay(config.get("relay", {}), errors)
 
     if errors:
         raise RuntimeError("Invalid config.json:\n- " + "\n- ".join(errors))
+
+
+def _validate_bot_admins(admins: object, errors: list[str]) -> None:
+    if admins in (None, []):
+        return
+    if not isinstance(admins, list):
+        errors.append("bot_admins must be an array.")
+        return
+
+    seen_ids: set[str] = set()
+    for index, admin in enumerate(admins):
+        path = f"bot_admins[{index}]"
+        if not isinstance(admin, dict):
+            errors.append(f"{path} must be an object.")
+            continue
+
+        admin_id = str(admin.get("id", "")).strip()
+        if not admin_id:
+            errors.append(f"{path}.id is required.")
+        elif admin_id in seen_ids:
+            errors.append(f"{path}.id duplicates admin id '{admin_id}'.")
+        seen_ids.add(admin_id)
+
+        name = admin.get("name")
+        if name is not None and not isinstance(name, str):
+            errors.append(f"{path}.name must be a string.")
+
+        features = admin.get("features", {})
+        if not isinstance(features, dict):
+            errors.append(f"{path}.features must be an object.")
+            continue
+        unknown = sorted(set(features) - KNOWN_BOT_ADMIN_FEATURES)
+        if unknown:
+            errors.append(f"{path}.features has unknown feature(s): {', '.join(unknown)}.")
+        for feature, enabled in features.items():
+            if not isinstance(enabled, bool):
+                errors.append(f"{path}.features.{feature} must be true or false.")
 
 
 def _validate_bots(bots: object, errors: list[str]) -> None:

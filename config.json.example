@@ -1,11 +1,16 @@
 {
-  "notifications": {
-    "admin_user_ids": []
-  },
-
-  "admin": {
-    "user_ids": []
-  },
+  "bot_admins": [
+    {
+      "id": "123456789012345678",
+      "name": "Example Admin",
+      "features": {
+        "exclusive_command": true,
+        "notifications": true,
+        "relay_reverse_delete": false,
+        "announce": true
+      }
+    }
+  ],
 
   "bots": [
     {
