@@ -52,25 +52,38 @@ python run.py
 
 `config.json` 控制 bot profile、全域管理員、通知與跨服 relay。單一伺服器功能（keywords、scheduler、moderation）的細項設定不放在這裡，改由 `config.guilds/{guild_id}.json` 控制。
 
-#### `notifications`
+#### `bot_admins` — Bot 管理員與功能節點
 
-接收管理員通知的 Discord 使用者 ID 陣列。通知會以私訊發送。
+管理員權限分為兩個獨立軸線：
 
-```json
-"notifications": {
-  "admin_user_ids": ["123456789012345678"]
-}
-```
-
-#### `admin`
-
-允許使用 Admin 類指令的 Discord 使用者 ID 陣列。具備伺服器 `Administrator` 權限的成員也可以使用。
+1. **`bot_admins[]`** — 在 `config.json` 宣告的 bot 管理員，每個成員用 `features` 物件逐項開關功能節點。
+2. **Discord 伺服器權限** — 由 Discord 本身決定（`管理伺服器` / `Administrator`），bot 無法設定，直接影響 `!msg`、`!relaylist` 等指令。
 
 ```json
-"admin": {
-  "user_ids": ["123456789012345678"]
-}
+"bot_admins": [
+  {
+    "id": "123456789012345678",
+    "name": "Example Admin",
+    "features": {
+      "exclusive_command": true,
+      "notifications": true,
+      "relay_reverse_delete": false,
+      "announce": true
+    }
+  }
+]
 ```
+
+| 功能節點 | 說明 |
+|---------|------|
+| `exclusive_command` | 允許使用 `!reload`（重新載入設定） |
+| `notifications` | 接收管理操作通知（DM）與錯誤通知 |
+| `relay_reverse_delete` | 刪除中繼副本時，即使頻道未開啟 `allow_reverse_delete` 也允許反刪原始訊息 |
+| `announce` | 允許使用 `!announce` 廣播訊息到 relay group |
+
+- `id` 必填；`name` 僅供人類閱讀，不參與任何邏輯判斷。
+- 未列在 `bot_admins` 的成員，即使擁有伺服器 `Administrator` 權限，也**不能**使用 `!reload` / `!announce` 等 bot 級指令。
+- 舊版扁平欄位仍會自動相容：`admin.user_ids` → `exclusive_command`，`notifications.admin_user_ids` → `notifications`。
 
 #### `bots`
 
@@ -118,16 +131,25 @@ Commands 類功能目前提供基本指令：
 !ping
 ```
 
-#### `admin`
+#### 管理指令
 
-Admin 類功能目前提供 JSON 訊息控制，只有 `admin.user_ids` 內的使用者或伺服器 Administrator 可以使用：
+管理指令分為兩類，權限來源不同：
+
+**Bot 管理員指令**（需在 `bot_admins` 且啟用對應功能節點）：
 
 ```text
-!msg send #channel {"content":"文字內容"}
+!reload                       # exclusive_command — 重新載入設定
+!announce group_name {JSON}   # announce — 廣播到 relay group 所有頻道
+```
+
+**Discord 管理員指令**（僅需伺服器 `管理伺服器` / `Administrator` 權限，與 bot_admins 無關）：
+
+```text
+!msg send #channel {"content":"文字內容"}   # 只能傳送到指令所在伺服器內的頻道
 !msg edit message_id {"content":"新文字內容"}
 !msg delete message_id
 !msg source message_id
-!announce group_name {"content":"公告內容"}
+!relaylist                    # 列出所有中繼群組與所屬頻道
 ```
 
 所有訊息都使用同一種 JSON 格式：
@@ -152,7 +174,7 @@ Admin 類功能目前提供 JSON 訊息控制，只有 `admin.user_ids` 內的�
 }
 ```
 
-`source` 會輸出指定訊息的 JSON，方便複製後微調再用 `edit`。`announce` 會把同一份 JSON 發送到指定 relay group 的所有一般文字頻道，論壇頻道會略過。`edit` / `delete` 只會操作同一隻 bot 自己發出的訊息。
+`source` 會輸出指定訊息的 JSON，方便複製後微調再用 `edit`。`announce` 會把同一份 JSON 發送到指定 relay group 的所有一般文字頻道，論壇頻道會略過。`edit` / `delete` 只會操作同一隻 bot 自己發出的訊息。`!msg` 與 `!announce` 的每次使用都會記錄審計日誌，並 DM 通知啟用 `notifications` 的 bot 管理員。
 
 ### `config.guilds/{guild_id}.json` — 單服功能設定
 
@@ -239,7 +261,7 @@ Scheduler 類功能的細項設定（需在 profile 與此伺服器都開啟 `sc
 | `brand_name` | ❌ 選填 | 顯示的名稱標籤，留空則自動帶入伺服器名稱 |
 | `process_bot_messages` | ❌ 選填 | 是否轉發其他 bot 的訊息（預設 `false`） |
 | `allow_forward_delete` | ❌ 選填 | 原始訊息刪除時是否同步刪除中繼副本（預設 `true`） |
-| `allow_reverse_delete` | ❌ 選填 | 中繼副本被刪除時是否反刪原始訊息（預設 `false`） |
+| `allow_reverse_delete` | ❌ 選填 | 中繼副本被刪除時是否反刪原始訊息（預設 `false`）。關閉時，啟用 `relay_reverse_delete` 功能的 bot 管理員仍可反刪，但需要 bot 擁有「檢視審計日誌」權限以確認刪除者身分 |
 
 ##### 角色映射
 
@@ -283,6 +305,7 @@ Bot/
 ├── main.py              ← 啟動入口，建立 bot profiles 並註冊各模組
 ├── run.py               ← python run.py 啟動腳本
 ├── app/
+│   ├── bot_admins.py        ← bot_admins 功能節點判斷（新 schema + 舊欄位相容）
 │   ├── bot_profiles.py      ← 多 bot token profile 載入與驗證
 │   ├── config.py            ← 讀取 .env
 │   ├── config_validator.py  ← 啟動早期驗證 config.json
@@ -293,15 +316,18 @@ Bot/
 ├── database/
 │   └── database.py      ← SQLite + migration
 ├── utils/
+│   ├── admin_audit.py       ← 管理操作審計日誌 + DM 通知
+│   ├── admin_notifier.py    ← DM 通知 bot 管理員
 │   ├── log_manager.py
-│   ├── time_utils.py
-│   └── admin_notifier.py
+│   ├── message_payload.py   ← JSON 訊息 payload 解析/輸出
+│   └── time_utils.py
 └── cogs/
     ├── relay/           ← 跨伺服器中繼（整包為一個 Cog）
+    ├── bot_admin/       ← bot 管理員指令（bot_admins 功能節點控管）
+    ├── guild_admin/     ← Discord 管理員指令（manage_guild / administrator）
     ├── keywords/        ← 關鍵字被動回應
     ├── scheduler/       ← 定時任務
     ├── moderation/      ← 頻道管理
-    ├── admin/           ← 管理員指令
     └── commands/        ← 基本指令
 ```
 
