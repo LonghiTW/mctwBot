@@ -67,8 +67,7 @@ python run.py
     "features": {
       "exclusive_command": true,
       "notifications": true,
-      "relay_reverse_delete": false,
-      "announce": true
+      "relay_reverse_delete": false
     }
   }
 ]
@@ -76,10 +75,9 @@ python run.py
 
 | 功能節點 | 說明 |
 |---------|------|
-| `exclusive_command` | 允許使用 `!reload`（重新載入設定） |
+| `exclusive_command` | 允許使用 `!reload` 與 `!announce`（重新載入設定、廣播訊息） |
 | `notifications` | 接收管理操作通知（DM）與錯誤通知 |
 | `relay_reverse_delete` | 刪除中繼副本時，即使頻道未開啟 `allow_reverse_delete` 也允許反刪原始訊息 |
-| `announce` | 允許使用 `!announce` 廣播訊息到 relay group |
 
 - `id` 必填；`name` 僅供人類閱讀，不參與任何邏輯判斷。
 - 未列在 `bot_admins` 的成員，即使擁有伺服器 `Administrator` 權限，也**不能**使用 `!reload` / `!announce` 等 bot 級指令。
@@ -139,7 +137,7 @@ Commands 類功能目前提供基本指令：
 
 ```text
 !reload                       # exclusive_command — 重新載入設定
-!announce group_name {JSON}   # announce — 廣播到 relay group 所有頻道
+!announce group_name {JSON}   # exclusive_command — 廣播到 relay group 所有頻道
 ```
 
 **Discord 管理員指令**（僅需伺服器 `管理伺服器` / `Administrator` 權限，與 bot_admins 無關）：

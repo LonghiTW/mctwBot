@@ -1,8 +1,8 @@
 """Bot admin command to broadcast a JSON message to every relay group channel.
 
-Restricted to bot_admins with the ``announce`` feature. Every usage is
-written to the backend log and a DM is sent to bot admins with the
-``notifications`` feature.
+Restricted to bot_admins with the ``exclusive_command`` feature (``!announce``
+is part of the exclusive_command node). Every usage is written to the backend
+log and a DM is sent to bot admins with the ``notifications`` feature.
 """
 from __future__ import annotations
 
@@ -20,9 +20,9 @@ class AnnounceControl(commands.Cog):
         self.bot = bot
 
     async def cog_check(self, ctx: commands.Context) -> bool:
-        if bot_admin_has_feature(ctx.author.id, "announce"):
+        if bot_admin_has_feature(ctx.author.id, "exclusive_command"):
             return True
-        await ctx.send("❌ 只有 bot_admins 且啟用 announce 的管理員才能使用此指令。")
+        await ctx.send("❌ 只有 bot_admins 且啟用 exclusive_command 的管理員才能使用此指令。")
         return False
 
     @commands.command(name="announce")

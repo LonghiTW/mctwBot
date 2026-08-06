@@ -24,7 +24,7 @@ class BotAdminsTests(unittest.TestCase):
     def test_known_features(self):
         self.assertEqual(
             KNOWN_FEATURES,
-            {"exclusive_command", "notifications", "relay_reverse_delete", "announce"},
+            {"exclusive_command", "notifications", "relay_reverse_delete"},
         )
 
     def test_new_schema_feature_nodes(self):
@@ -38,7 +38,6 @@ class BotAdminsTests(unittest.TestCase):
                             "exclusive_command": True,
                             "notifications": False,
                             "relay_reverse_delete": True,
-                            "announce": False,
                         },
                     },
                     {"id": "222", "features": {"notifications": True}},
@@ -50,7 +49,7 @@ class BotAdminsTests(unittest.TestCase):
                 self.assertTrue(bot_admin_has_feature("111", "relay_reverse_delete"))
                 self.assertFalse(bot_admin_has_feature(222, "exclusive_command"))
                 self.assertTrue(bot_admin_has_feature(222, "notifications"))
-                self.assertFalse(bot_admin_has_feature(333, "announce"))
+                self.assertFalse(bot_admin_has_feature(333, "exclusive_command"))
 
                 self.assertTrue(is_bot_admin("111"))
                 self.assertTrue(is_bot_admin(222))
@@ -58,7 +57,6 @@ class BotAdminsTests(unittest.TestCase):
 
                 self.assertEqual(bot_admin_ids_with_feature("relay_reverse_delete"), {111})
                 self.assertEqual(bot_admin_ids_with_feature("notifications"), {222})
-                self.assertEqual(bot_admin_ids_with_feature("announce"), set())
 
     def test_legacy_fallback(self):
         with tempfile.TemporaryDirectory() as temp_dir:

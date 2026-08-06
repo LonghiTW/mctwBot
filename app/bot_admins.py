@@ -25,7 +25,6 @@ KNOWN_FEATURES = frozenset({
     "exclusive_command",
     "notifications",
     "relay_reverse_delete",
-    "announce",
 })
 
 # Legacy fallback mapping: feature -> (config section, key).
