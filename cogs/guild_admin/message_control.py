@@ -41,7 +41,7 @@ class MessageControl(commands.Cog):
         data = message_from_json(payload)
         await audit_admin_usage(
             self.bot, ctx, "msg send",
-            f"channel={channel.id} ({channel.name}) payload={payload}",
+            f"頻道：{channel.id} ({channel.name})\n內容：{payload}",
         )
         message = await channel.send(**data)
         await ctx.send(f"Sent message: `{message.id}`")
@@ -58,7 +58,7 @@ class MessageControl(commands.Cog):
         data = message_from_json(payload)
         await audit_admin_usage(
             self.bot, ctx, "msg edit",
-            f"message={message_id} payload={payload}",
+            f"訊息：{message_id}\n內容：{payload}",
         )
         await message.edit(**data)
         await ctx.send(f"Edited message: `{message.id}`")
@@ -72,7 +72,7 @@ class MessageControl(commands.Cog):
         if message.author.id != self.bot.user.id:
             await ctx.send("Can only delete messages sent by this bot.")
             return
-        await audit_admin_usage(self.bot, ctx, "msg delete", f"message={message_id}")
+        await audit_admin_usage(self.bot, ctx, "msg delete", f"訊息：{message_id}")
         await message.delete()
         await ctx.send(f"Deleted message: `{message.id}`")
 

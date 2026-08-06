@@ -35,7 +35,7 @@ class AnnounceControl(commands.Cog):
 
         await audit_admin_usage(
             self.bot, ctx, "announce",
-            f"group={group_name} channels={len(channels)} payload={payload}",
+            f"群組：{group_name}\n頻道數：{len(channels)}\n內容：{payload}",
         )
 
         sent = 0
