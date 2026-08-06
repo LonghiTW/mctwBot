@@ -6,12 +6,12 @@
 
 | 模組 | 說明 | 預設開關 |
 |------|------|---------|
-| **Relay** | 跨伺服器訊息橋接 — 支援文字頻道、討論串、論壇貼文的雙向同步 | ✅ 單一 bot profile 可啟用 |
+| **Relay** | 跨伺服器訊息橋接 — 支援文字頻道、討論串、論壇貼文的雙向同步；並提供 relay 管理指令（`!reload`、`!announce`、`!relaylist`） | ✅ 單一 bot profile 可啟用 |
 | **Keywords** | 被動關鍵字回應 — 「你好/hello」「生日/birthday/hbd」 | ✅ 可關閉 |
 | **Scheduler** | 定時任務 — 週五日落 gif、週日 21:00 圖片 | ✅ 可關閉 |
 | **Moderation** | 頻道與成員管理，目前包含 Welcome Cleaner | ✅ 可關閉 |
 | **Commands** | 基本指令模組，目前包含 `!ping` | ✅ 可關閉 |
-| **Admin** | 管理員功能 — bot 管理員指令（`!reload`、`!announce`）與 Discord 管理員指令（`!msg`、`!relaylist`） | ✅ 可關閉 |
+| **Admin** | 管理員功能，目前包含 JSON 訊息控制（`!msg` 系列，不需 relay） | ✅ 可關閉 |
 
 ## 快速開始
 
@@ -57,7 +57,7 @@ python run.py
 管理員權限分為兩個獨立軸線：
 
 1. **`bot_admins[]`** — 在 `config.json` 宣告的 bot 管理員，每個成員用 `features` 物件逐項開關功能節點。
-2. **Discord 伺服器權限** — 由 Discord 本身決定（`管理伺服器` / `Administrator`），bot 無法設定，直接影響 `!msg`、`!relaylist` 等指令。
+2. **Discord 伺服器權限** — 由 Discord 本身決定（`管理伺服器` / `Administrator`），bot 無法設定，直接影響 `!msg`、`!relaylist` 等指令（後者僅在啟用 relay 的 profile 上載入）。
 
 ```json
 "bot_admins": [
@@ -119,7 +119,7 @@ python run.py
 
 `features` 使用大分類控制 Cog 載入，所有功能預設都是 `false`，需要的模組必須在各 profile 中明確啟用。`relay`、`commands`、`admin` 是全域功能；`keywords`、`scheduler`、`moderation` 啟用後，仍會再依每個伺服器的 `config.guilds/{guild_id}.json` 決定是否執行。
 
-> `commands` 目前只載入 `ping`；`admin` 是獨立 feature，專門處理管理員功能。
+> `commands` 目前只載入 `ping`。`admin` 提供與 relay 無關的 JSON 訊息控制（`!msg` 系列）；relay 管理指令（`!reload`、`!announce`、`!relaylist`）會隨 `relay` feature 一起載入，因此只有在啟用 relay 的 profile 上可用。
 
 #### `commands`
 
@@ -133,21 +133,21 @@ Commands 類功能目前提供基本指令：
 
 管理指令分為兩類，權限來源不同：
 
-**Bot 管理員指令**（需在 `bot_admins` 且啟用對應功能節點）：
+**Relay 管理指令**（僅在啟用 `relay` 的 profile 上載入；需在 `bot_admins` 且啟用對應功能節點）：
 
 ```text
 !reload                       # exclusive_command — 重新載入設定
 !announce group_name {JSON}   # exclusive_command — 廣播到 relay group 所有頻道
+!relaylist                    # 需「管理伺服器」權限 — 列出所有中繼群組與所屬頻道
 ```
 
-**Discord 管理員指令**（僅需伺服器 `管理伺服器` / `Administrator` 權限，與 bot_admins 無關）：
+**Discord 管理員指令**（`admin` feature，不需 relay；僅需伺服器 `管理伺服器` / `Administrator` 權限，與 bot_admins 無關）：
 
 ```text
 !msg send #channel {"content":"文字內容"}   # 只能傳送到指令所在伺服器內的頻道
 !msg edit message_id {"content":"新文字內容"}
 !msg delete message_id
 !msg source message_id
-!relaylist                    # 列出所有中繼群組與所屬頻道
 ```
 
 所有訊息都使用同一種 JSON 格式：

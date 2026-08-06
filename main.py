@@ -17,14 +17,17 @@ from cogs.relay.queue import relay_queue
 log = LogManager
 
 FEATURE_EXTENSIONS = {
-    "relay": ("cogs.relay.relay_cog", "cogs.relay.guild_tracker"),
-    "commands": ("cogs.commands.ping",),
-    "admin": (
+    "relay": (
+        "cogs.relay.relay_cog",
+        "cogs.relay.guild_tracker",
+        # Relay management commands — depend on relay tables, only load with relay
         "cogs.bot_admin.bot_reload",
         "cogs.bot_admin.announce_control",
-        "cogs.guild_admin.message_control",
         "cogs.guild_admin.relaylist",
     ),
+    "commands": ("cogs.commands.ping",),
+    # Generic guild-admin JSON message control — independent of relay
+    "admin": ("cogs.guild_admin.message_control",),
 }
 
 CONFIGURED_FEATURE_EXTENSIONS = {
