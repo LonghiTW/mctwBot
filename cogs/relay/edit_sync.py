@@ -8,7 +8,12 @@ from discord import Embed, Message
 from database import DatabaseManager
 from utils.log_manager import LogManager
 from .routing import linked_channel_id_for_message
-from .rendering import append_attachment_previews, resolve_klipy_urls, strip_embed_urls_from_content
+from .rendering import (
+    append_attachment_previews,
+    build_reply_embed,
+    resolve_klipy_urls,
+    strip_embed_urls_from_content,
+)
 from .webhook_messages import WebhookMessageClient
 from .message_store import RelayMessageStore
 
@@ -91,6 +96,22 @@ class EditSync:
         final_content = strip_embed_urls_from_content(final_content, message.embeds)
         final_content, _ = append_attachment_previews(final_content, payload_embeds, message.attachments)
 
+        # Reply reconstruction — fetch the referenced message once (mirrors _relay_to_target)
+        replied_message: Message | None = None
+        reply_deleted = False
+        if message.reference and message.reference.message_id:
+            try:
+                replied_message = await message.channel.fetch_message(message.reference.message_id)
+            except Exception:
+                replied_message = None
+            if replied_message is None and isinstance(message.channel, discord.Thread) and message.channel.parent:
+                try:
+                    replied_message = await message.channel.parent.fetch_message(message.reference.message_id)
+                except Exception:
+                    replied_message = None
+            if replied_message is None:
+                reply_deleted = True
+
         relayed = store.relayed_for_original(str(message.id))
         for row in relayed:
             try:
@@ -102,6 +123,30 @@ class EditSync:
                         target_channel = None
                 target_guild = getattr(target_channel, "guild", None) if target_channel else None
                 edit_content, edit_embeds = await self._resolve_emojis(final_content, list(payload_embeds), target_guild)
+
+                # Keep the reply embed in place (first embed) — otherwise edits wipe it out
+                if message.reference and message.reference.message_id:
+                    if reply_deleted:
+                        reply_embed = Embed(color=0xB0B8C6, description="*Replying to a deleted message.*")
+                    else:
+                        parent_rec = db.fetchone(
+                            "SELECT original_message_id FROM relayed_messages WHERE relayed_message_id = ?",
+                            (str(replied_message.id),),
+                        )
+                        root_id = parent_rec["original_message_id"] if parent_rec else str(replied_message.id)
+                        copy = db.fetchone(
+                            """SELECT relayed_message_id FROM relayed_messages
+                               WHERE original_message_id = ? AND relayed_channel_id = ?""",
+                            (root_id, row["relayed_channel_id"]),
+                        )
+                        guild_id = getattr(target_guild, "id", None) or "0"
+                        link = (
+                            f"https://discord.com/channels/{guild_id}/{row['relayed_channel_id']}/{copy['relayed_message_id']}"
+                            if copy else str(replied_message.jump_url)
+                        )
+                        reply_embed = build_reply_embed(replied_message, link, deleted=False)
+                    edit_embeds = [reply_embed] + edit_embeds
+
                 edit_kwargs = {
                     "content": edit_content,
                     "embeds": edit_embeds,
