@@ -45,6 +45,38 @@ log = LogManager
 RelayChannel = Union[discord.TextChannel, discord.ForumChannel]
 Direction = Literal["BOTH", "SEND_ONLY", "RECEIVE_ONLY"]
 
+
+class RelayChannelTransformer(app_commands.Transformer):
+    """Channel option that works from DMs and across guilds.
+
+    discord.py's default channel transformer resolves through the guild
+    cache (``PartialChannel.resolve``), which returns ``None`` when the
+    command is invoked from a DM where the guild context is unavailable.
+    This transformer falls back to an API ``fetch_channel`` so bot admins
+    can reference channels from anywhere the bot is present.
+    """
+
+    @property
+    def type(self) -> discord.AppCommandOptionType:
+        return discord.AppCommandOptionType.channel
+
+    @property
+    def channel_types(self) -> list[discord.ChannelType]:
+        # Keep the channel picker limited to text-like channels.
+        return [discord.ChannelType.text, discord.ChannelType.news, discord.ChannelType.forum]
+
+    async def transform(self, interaction: discord.Interaction, value, /) -> RelayChannel:
+        resolved = value.resolve()
+        if isinstance(resolved, (discord.TextChannel, discord.ForumChannel)):
+            return resolved
+        try:
+            channel = await interaction.client.fetch_channel(value.id)
+        except Exception:
+            channel = None
+        if isinstance(channel, (discord.TextChannel, discord.ForumChannel)):
+            return channel
+        raise app_commands.TransformerError(value, discord.AppCommandOptionType.channel, self)
+
 _PERMISSION_DENIED = "❌ 只有 bot_admins 且啟用 exclusive_command 的管理員才能使用此指令。"
 
 
@@ -169,7 +201,7 @@ class RelayChannelSub(app_commands.Group):
         self,
         interaction: discord.Interaction,
         group: str,
-        channel: RelayChannel,
+        channel: app_commands.Transform[RelayChannel, RelayChannelTransformer],
         direction: Direction = "BOTH",
         brand_name: str | None = None,
         process_bot_messages: bool = False,
@@ -192,7 +224,7 @@ class RelayChannelSub(app_commands.Group):
     async def edit(
         self,
         interaction: discord.Interaction,
-        channel: RelayChannel,
+        channel: app_commands.Transform[RelayChannel, RelayChannelTransformer],
         group: str | None = None,
         direction: Direction | None = None,
         brand_name: str | None = None,
@@ -215,7 +247,7 @@ class RelayChannelSub(app_commands.Group):
         )
 
     @app_commands.command(name="remove", description="從 relay group 移除頻道（保留空 group）")
-    async def remove(self, interaction: discord.Interaction, channel: RelayChannel):
+    async def remove(self, interaction: discord.Interaction, channel: app_commands.Transform[RelayChannel, RelayChannelTransformer]):
         await _run(
             interaction, "relay channel remove",
             f"頻道：{channel.id} ({channel.name})",
