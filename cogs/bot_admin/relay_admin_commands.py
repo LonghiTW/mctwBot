@@ -4,6 +4,14 @@ Only loaded on bot profiles with the ``relay`` feature. Every command is
 restricted to bot_admins with the ``exclusive_command`` feature. Changes are
 written to config.json (atomic), validated, synced into the database, and
 recorded in the audit log with a DM to ``notifications`` admins.
+
+Structure notes (discord.py 2.7.x):
+- Nested subgroups use ``Group`` subclasses (``/relay group add``). The
+  subcommand callbacks are bound to the subgroup instance, NOT the cog, so
+  shared helpers live at module level and use ``interaction.client`` instead
+  of ``self.bot``.
+- ``interaction_check`` must be defined on the subgroup class (or referenced
+  from it) because discord.py looks it up on the command's ``binding``.
 """
 from __future__ import annotations
 
@@ -37,9 +45,23 @@ log = LogManager
 RelayChannel = Union[discord.TextChannel, discord.ForumChannel]
 Direction = Literal["BOTH", "SEND_ONLY", "RECEIVE_ONLY"]
 
+_PERMISSION_DENIED = "❌ 只有 bot_admins 且啟用 exclusive_command 的管理員才能使用此指令。"
 
+
+# ---------------------------------------------------------------------------
+# Shared helpers (module level — subgroup command callbacks are bound to the
+# subgroup instance, so they cannot rely on ``self`` pointing at the cog)
+# ---------------------------------------------------------------------------
 def _channel_kind(channel: discord.abc.GuildChannel) -> str:
     return "text" if isinstance(channel, discord.TextChannel) else "forum"
+
+
+async def _interaction_check(interaction: discord.Interaction) -> bool:
+    """Permission gate shared by every relay slash subcommand."""
+    if bot_admin_has_feature(interaction.user.id, "exclusive_command"):
+        return True
+    await interaction.response.send_message(_PERMISSION_DENIED, ephemeral=True)
+    return False
 
 
 async def _group_autocomplete(interaction: discord.Interaction, current: str) -> list[app_commands.Choice[str]]:
@@ -54,12 +76,55 @@ async def _group_autocomplete(interaction: discord.Interaction, current: str) ->
     return [app_commands.Choice(name=name, value=name) for name in names[:25]]
 
 
+async def _commit(interaction: discord.Interaction, new_config: dict, action: str, detail: str) -> None:
+    """Backup -> atomic save (validates) -> sync DB -> dispatch reload -> audit."""
+    client = interaction.client
+    backup_config()
+    save_config_file(new_config)
+
+    db = DatabaseManager()
+    old_rows = db.fetchall(
+        """SELECT lc.channel_id, lc.guild_id, lc.group_id, rg.group_name
+           FROM linked_channels lc
+           JOIN relay_groups rg ON rg.group_id = lc.group_id"""
+    )
+    await sync_configured_relays(client)
+    new_rows = db.fetchall(
+        """SELECT lc.channel_id, lc.guild_id, lc.group_id, rg.group_name
+           FROM linked_channels lc
+           JOIN relay_groups rg ON rg.group_id = lc.group_id"""
+    )
+    client.dispatch("bot_reload", old_rows, new_rows)
+
+    await audit_admin_usage(client, interaction, action, detail)
+
+
+async def _run(interaction: discord.Interaction, action: str, detail: str, apply) -> None:
+    try:
+        config = load_config_file()
+        new_config = apply(config)
+        await _commit(interaction, new_config, action, detail)
+    except RelayConfigEditError as exc:
+        await interaction.response.send_message(f"❌ {exc}", ephemeral=True)
+        return
+    except Exception as exc:
+        log.error("SLASH", f"{action} failed: {exc}")
+        await interaction.response.send_message(f"❌ 操作失敗：{exc}", ephemeral=True)
+        return
+    await interaction.response.send_message(f"✅ {action} 完成。", ephemeral=True)
+
+
+# ---------------------------------------------------------------------------
+# /relay group ...
+# ---------------------------------------------------------------------------
 class RelayGroupSub(app_commands.Group):
     """Subgroup: /relay group ..."""
 
+    interaction_check = staticmethod(_interaction_check)
+
     @app_commands.command(name="add", description="新增一個 relay group（可先為空）")
     async def add(self, interaction: discord.Interaction, name: str, hidden: bool = False):
-        await self._run(
+        await _run(
             interaction, "relay group add", f"名稱：{name}\n隱藏：{hidden}",
             lambda config: add_group(config, name, hidden=hidden),
         )
@@ -72,7 +137,7 @@ class RelayGroupSub(app_commands.Group):
         new_name: str | None = None,
         hidden: bool | None = None,
     ):
-        await self._run(
+        await _run(
             interaction, "relay group edit",
             f"群組：{group}\n新名稱：{new_name or '（不變）'}\n隱藏：{hidden if hidden is not None else '（不變）'}",
             lambda config: edit_group(config, group, new_name=new_name, hidden=hidden),
@@ -80,7 +145,7 @@ class RelayGroupSub(app_commands.Group):
 
     @app_commands.command(name="remove", description="移除 relay group（連同其頻道與角色映射）")
     async def remove(self, interaction: discord.Interaction, group: str):
-        await self._run(
+        await _run(
             interaction, "relay group remove", f"群組：{group}",
             lambda config: remove_group(config, group)[0],
         )
@@ -91,8 +156,13 @@ class RelayGroupSub(app_commands.Group):
         return await _group_autocomplete(interaction, current)
 
 
+# ---------------------------------------------------------------------------
+# /relay channel ...
+# ---------------------------------------------------------------------------
 class RelayChannelSub(app_commands.Group):
     """Subgroup: /relay channel ..."""
+
+    interaction_check = staticmethod(_interaction_check)
 
     @app_commands.command(name="add", description="新增頻道到 relay group")
     async def add(
@@ -106,7 +176,7 @@ class RelayChannelSub(app_commands.Group):
         allow_forward_delete: bool = True,
         allow_reverse_delete: bool = False,
     ):
-        await self._run(
+        await _run(
             interaction, "relay channel add",
             f"群組：{group}\n頻道：{channel.id} ({channel.name})\n方向：{direction}\n品牌名稱：{brand_name or '（自動）'}\n轉發 bot 訊息：{process_bot_messages}\n順向刪除：{allow_forward_delete}\n反向刪除：{allow_reverse_delete}",
             lambda config: add_channel(
@@ -131,7 +201,7 @@ class RelayChannelSub(app_commands.Group):
         allow_forward_delete: bool | None = None,
         allow_reverse_delete: bool | None = None,
     ):
-        await self._run(
+        await _run(
             interaction, "relay channel edit",
             f"頻道：{channel.id} ({channel.name})\n搬移群組：{group or '（不變）'}\n方向：{direction or '（不變）'}\n品牌名稱：{brand_name or '（不變）'}\n清除品牌名稱：{clear_brand_name}",
             lambda config: edit_channel(
@@ -146,7 +216,7 @@ class RelayChannelSub(app_commands.Group):
 
     @app_commands.command(name="remove", description="從 relay group 移除頻道（保留空 group）")
     async def remove(self, interaction: discord.Interaction, channel: RelayChannel):
-        await self._run(
+        await _run(
             interaction, "relay channel remove",
             f"頻道：{channel.id} ({channel.name})",
             lambda config: remove_channel(config, channel.id)[0],
@@ -158,6 +228,9 @@ class RelayChannelSub(app_commands.Group):
         return await _group_autocomplete(interaction, current)
 
 
+# ---------------------------------------------------------------------------
+# Top-level /relay group
+# ---------------------------------------------------------------------------
 class RelayCommands(app_commands.Group):
     """Top-level group: /relay"""
 
@@ -170,56 +243,6 @@ class RelayAdminCommands(commands.Cog):
         self.bot = bot
 
     relay = RelayCommands(name="relay", description="管理 relay 群組與頻道（bot 管理員）")
-
-    # ------------------------------------------------------------------
-    # Permission gate for the whole cog (applies to all subcommands)
-    # ------------------------------------------------------------------
-    async def interaction_check(self, interaction: discord.Interaction) -> bool:
-        if bot_admin_has_feature(interaction.user.id, "exclusive_command"):
-            return True
-        await interaction.response.send_message(
-            "❌ 只有 bot_admins 且啟用 exclusive_command 的管理員才能使用此指令。",
-            ephemeral=True,
-        )
-        return False
-
-    # ------------------------------------------------------------------
-    # Shared helpers
-    # ------------------------------------------------------------------
-    async def _commit(self, interaction: discord.Interaction, new_config: dict, action: str, detail: str) -> None:
-        """Backup -> atomic save (validates) -> sync DB -> dispatch reload -> audit."""
-        backup_config()
-        save_config_file(new_config)
-
-        db = DatabaseManager()
-        old_rows = db.fetchall(
-            """SELECT lc.channel_id, lc.guild_id, lc.group_id, rg.group_name
-               FROM linked_channels lc
-               JOIN relay_groups rg ON rg.group_id = lc.group_id"""
-        )
-        await sync_configured_relays(self.bot)
-        new_rows = db.fetchall(
-            """SELECT lc.channel_id, lc.guild_id, lc.group_id, rg.group_name
-               FROM linked_channels lc
-               JOIN relay_groups rg ON rg.group_id = lc.group_id"""
-        )
-        self.bot.dispatch("bot_reload", old_rows, new_rows)
-
-        await audit_admin_usage(self.bot, interaction, action, detail)
-
-    async def _run(self, interaction: discord.Interaction, action: str, detail: str, apply) -> None:
-        try:
-            config = load_config_file()
-            new_config = apply(config)
-            await self._commit(interaction, new_config, action, detail)
-        except RelayConfigEditError as exc:
-            await interaction.response.send_message(f"❌ {exc}", ephemeral=True)
-            return
-        except Exception as exc:
-            log.error("SLASH", f"{action} failed: {exc}")
-            await interaction.response.send_message(f"❌ 操作失敗：{exc}", ephemeral=True)
-            return
-        await interaction.response.send_message(f"✅ {action} 完成。", ephemeral=True)
 
 
 async def setup(bot: commands.Bot):

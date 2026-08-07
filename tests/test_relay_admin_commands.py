@@ -10,6 +10,7 @@ from cogs.bot_admin.relay_admin_commands import (
     RelayAdminCommands,
     _channel_kind,
     _group_autocomplete,
+    _interaction_check,
 )
 
 
@@ -33,13 +34,55 @@ class FakeForumChannel(discord.ForumChannel):
 class RelayAdminCommandsTests(unittest.TestCase):
     def setUp(self):
         self.cog = RelayAdminCommands(SimpleNamespace())
+        self.root = self.cog.__cog_app_commands__[0]
 
+    # ------------------------------------------------------------------
+    # Permission gate wiring on the subgroup bindings
+    # ------------------------------------------------------------------
+    def test_group_subcommand_binding_runs_permission_check(self):
+        add_cmd = self.root._children["group"]._children["add"]
+
+        with patch(
+            "cogs.bot_admin.relay_admin_commands.bot_admin_has_feature",
+            return_value=True,
+        ):
+            ok = asyncio.run(add_cmd._check_can_run(_interaction()))
+
+        self.assertTrue(ok)
+
+    def test_group_subcommand_denies_non_admin(self):
+        add_cmd = self.root._children["group"]._children["add"]
+        interaction = _interaction()
+
+        with patch(
+            "cogs.bot_admin.relay_admin_commands.bot_admin_has_feature",
+            return_value=False,
+        ):
+            ok = asyncio.run(add_cmd._check_can_run(interaction))
+
+        self.assertFalse(ok)
+        interaction.response.send_message.assert_called_once()
+
+    def test_channel_subcommand_binding_runs_permission_check(self):
+        add_cmd = self.root._children["channel"]._children["add"]
+
+        with patch(
+            "cogs.bot_admin.relay_admin_commands.bot_admin_has_feature",
+            return_value=True,
+        ):
+            ok = asyncio.run(add_cmd._check_can_run(_interaction()))
+
+        self.assertTrue(ok)
+
+    # ------------------------------------------------------------------
+    # _interaction_check itself
+    # ------------------------------------------------------------------
     def test_interaction_check_allows_exclusive_command_admin(self):
         with patch(
             "cogs.bot_admin.relay_admin_commands.bot_admin_has_feature",
             return_value=True,
         ):
-            result = asyncio.run(self.cog.interaction_check(_interaction()))
+            result = asyncio.run(_interaction_check(_interaction()))
 
         self.assertTrue(result)
 
@@ -48,14 +91,20 @@ class RelayAdminCommandsTests(unittest.TestCase):
             "cogs.bot_admin.relay_admin_commands.bot_admin_has_feature",
             return_value=False,
         ):
-            result = asyncio.run(self.cog.interaction_check(_interaction()))
+            result = asyncio.run(_interaction_check(_interaction()))
 
         self.assertFalse(result)
 
+    # ------------------------------------------------------------------
+    # Channel kind classification
+    # ------------------------------------------------------------------
     def test_channel_kind_classifies_text_and_forum(self):
         self.assertEqual(_channel_kind(FakeTextChannel()), "text")
         self.assertEqual(_channel_kind(FakeForumChannel()), "forum")
 
+    # ------------------------------------------------------------------
+    # Group autocomplete
+    # ------------------------------------------------------------------
     def test_group_autocomplete_returns_matching_names(self):
         async def run():
             with patch(
