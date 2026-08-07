@@ -75,7 +75,7 @@ python run.py
 
 | 功能節點 | 說明 |
 |---------|------|
-| `exclusive_command` | 允許使用 `!reload` 與 `!announce`（重新載入設定、廣播訊息） |
+| `exclusive_command` | 允許使用 `!reload`、`!announce` 與 `/relay` 系列 slash 指令（重新載入設定、廣播訊息、管理 relay 群組與頻道） |
 | `notifications` | 接收管理操作通知（DM）與錯誤通知 |
 | `relay_reverse_delete` | 刪除中繼副本時，即使頻道未開啟 `allow_reverse_delete` 也允許反刪原始訊息 |
 
@@ -150,6 +150,37 @@ Commands 類功能目前提供基本指令：
 !msg source message_id
 ```
 
+**Relay Slash 指令**（僅在啟用 `relay` 的 profile 上載入；需在 `bot_admins` 且啟用 `exclusive_command`；與 `!reload` 相同權限門檻）：
+
+```text
+/relay group add name [hidden]                      # 新增 relay group（可先為空）
+/relay group edit group [new_name] [hidden]         # 編輯 group 名稱／隱藏狀態
+/relay group remove group                           # 移除 group（連同頻道與角色映射）
+/relay channel add group channel [direction] [brand_name] [process_bot_messages] [allow_forward_delete] [allow_reverse_delete]
+/relay channel edit channel [group] [direction] [brand_name] [clear_brand_name] [process_bot_messages] [allow_forward_delete] [allow_reverse_delete]
+/relay channel remove channel                       # 從 group 移除頻道（保留空 group）
+```
+
+Slash 指令的參數詳細說明：
+
+| 參數 | 類型 | 說明 |
+|------|------|------|
+| `name` | 文字 | 新 group 名稱，需唯一 |
+| `hidden` | 布林 | 是否在 `!relaylist` 隱藏（預設 `false`） |
+| `group` | 文字（自動補全） | 目標 group 名稱 |
+| `new_name` | 文字 | 改名（不填則保留） |
+| `channel` | 頻道選擇器 | 只接受一般文字頻道與論壇頻道 |
+| `direction` | 選單 | `BOTH` / `SEND_ONLY` / `RECEIVE_ONLY`（預設 `BOTH`） |
+| `brand_name` | 文字 | 自訂顯示名稱（不填則自動產生） |
+| `clear_brand_name` | 布林 | 清除自訂名稱、恢復自動產生 |
+| `process_bot_messages` | 布林 | 是否轉發其他 bot 的訊息（預設 `false`） |
+| `allow_forward_delete` | 布林 | 順向刪除同步（預設 `true`） |
+| `allow_reverse_delete` | 布林 | 反向刪除同步（預設 `false`） |
+
+每次執行都會：自動備份 `config.json` → 原子寫入（通過 `validate_config` 驗證）→ 同步資料庫 → 觸發 `bot_reload` 事件 → 記錄審計日誌並 DM 通知啟用 `notifications` 的 bot 管理員。指令回覆一律為 ephemeral（只有操作者看得到）。
+
+> Slash 指令與 `!reload` 共用同一份 `config.json`，兩者修改會即時互相反映。
+
 所有訊息都使用同一種 JSON 格式：
 
 ```json
@@ -173,6 +204,23 @@ Commands 類功能目前提供基本指令：
 ```
 
 `source` 會輸出指定訊息的 JSON，方便複製後微調再用 `edit`。`announce` 會把同一份 JSON 發送到指定 relay group 的所有一般文字頻道，論壇頻道會略過。`edit` / `delete` 只會操作同一隻 bot 自己發出的訊息。`!msg` 與 `!announce` 的每次使用都會記錄審計日誌，並 DM 通知啟用 `notifications` 的 bot 管理員。
+
+#### `slash_commands`
+
+Slash 指令同步設定。可選，預設為全域同步：
+
+```json
+"slash_commands": {
+  "guild_ids": []
+}
+```
+
+| 欄位 | 說明 |
+|------|------|
+| `guild_ids` | 要同步指令到特定伺服器的 ID 列表（開發期用，指令只會出現在這些伺服器，更新即時生效） |
+
+- 留空或省略 `guild_ids` 時，指令會同步到所有伺服器（全域同步，更新可能需要最多 1 小時才生效）。
+- 填入 guild ID 可讓 `/relay` 指令只在指定測試伺服器出現，避免開發期間干擾正式環境。
 
 ### `config.guilds/{guild_id}.json` — 單服功能設定
 
@@ -316,6 +364,7 @@ Scheduler 類功能的細項設定（需在 profile 與此伺服器都開啟 `sc
 | `!relaylist` | 管理伺服器 或 管理員 | 無（只讀 relay 設定） |
 | `!reload` | bot_admins 且啟用 `exclusive_command` | 管理 Webhook（同步時建立 webhook） |
 | `!announce` | bot_admins 且啟用 `exclusive_command` | 發送訊息、嵌入連結（payload 含 embed 時） |
+| `/relay` 系列 | bot_admins 且啟用 `exclusive_command` | 管理 Webhook（`channel add` 同步時建立 webhook）、檢視頻道（頻道選擇器需要） |
 
 ### 單服功能
 
@@ -338,7 +387,8 @@ Bot/
 │   ├── config.py            ← 讀取 .env
 │   ├── config_validator.py  ← 啟動早期驗證 config.json
 │   ├── config_sync.py       ← 讀取 config.json → SQLite
-│   └── guild_config.py      ← 單服功能設定載入、驗證與自動生成
+│   ├── guild_config.py      ← 單服功能設定載入、驗證與自動生成
+│   └── relay_config_editor.py ← relay 設定編輯資料層（slash 指令使用）
 ├── config.guilds/       ← 單服 runtime 設定檔（不進 git）
 ├── data/                ← SQLite runtime 檔案（不進 git）
 ├── database/
@@ -352,6 +402,7 @@ Bot/
 └── cogs/
     ├── relay/           ← 跨伺服器中繼（整包為一個 Cog）
     ├── bot_admin/       ← bot 管理員指令（bot_admins 功能節點控管）
+    │   └── relay_admin_commands.py ← /relay slash 指令（group / channel 管理）
     ├── guild_admin/     ← Discord 管理員指令（manage_guild / administrator）
     ├── keywords/        ← 關鍵字被動回應
     ├── scheduler/       ← 定時任務
@@ -368,3 +419,5 @@ Bot/
 - 啟動時會先驗證 `config.json`，並在 bot ready 後補齊 `config.guilds/{guild_id}.json`
 - `config.json` 只放全域設定；`keywords`、`scheduler`、`moderation` 細項請放在單服設定檔
 - 修改設定後可用 `!reload` 重新載入 `config.json`、同步 relay，並清除/重讀單服設定快取
+- `/relay` slash 指令同樣直接改 `config.json`（自動備份 + 原子寫入 + 同步），修改後不需要再手動 `!reload`
+- Slash 指令預設全域同步；開發期可在 `config.json` 的 `slash_commands.guild_ids` 指定測試伺服器，讓指令更新即時生效

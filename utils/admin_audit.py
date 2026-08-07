@@ -12,6 +12,9 @@ log = LogManager
 
 
 async def audit_admin_usage(bot, ctx, action: str, detail: str, truncate: int = 500) -> None:
+    author = getattr(ctx, "author", None) or getattr(ctx, "user", None)
+    if author is None:
+        return
     text = detail if len(detail) <= truncate else detail[:truncate] + "..."
-    log.info("ADMIN-AUDIT", f"{action} | 使用者：{ctx.author} ({ctx.author.id}) | {text.replace(chr(10), ' / ')}")
-    await notify_admins(bot, f"管理操作：{action}", f"使用者：{ctx.author} ({ctx.author.id})\n{text}")
+    log.info("ADMIN-AUDIT", f"{action} | 使用者：{author} ({author.id}) | {text.replace(chr(10), ' / ')}")
+    await notify_admins(bot, f"管理操作：{action}", f"使用者：{author} ({author.id})\n{text}")

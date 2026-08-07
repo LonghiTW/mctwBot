@@ -145,9 +145,13 @@ def _validate_relay(relay: object, errors: list[str]) -> None:
         if "role_mappings" in group:
             errors.append(f"{path}.role_mappings is no longer supported; use relay.role_mappings.")
 
+        channel_kind = group.get("channel_kind")
+        if channel_kind is not None and channel_kind not in ("text", "forum"):
+            errors.append(f"{path}.channel_kind must be 'text' or 'forum'.")
+
         channels = group.get("channels", [])
-        if not isinstance(channels, list) or not channels:
-            errors.append(f"{path}.channels must be a non-empty array.")
+        if not isinstance(channels, list):
+            errors.append(f"{path}.channels must be an array.")
             continue
         for channel_index, channel in enumerate(channels):
             _validate_channel(channel, f"{path}.channels[{channel_index}]", errors)

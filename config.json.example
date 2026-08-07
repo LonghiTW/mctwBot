@@ -68,5 +68,9 @@
       }
     ],
     "role_mappings": []
+  },
+
+  "slash_commands": {
+    "guild_ids": []
   }
 }

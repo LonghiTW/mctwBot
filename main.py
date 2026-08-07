@@ -23,6 +23,7 @@ FEATURE_EXTENSIONS = {
         # Relay management commands — depend on relay tables, only load with relay
         "cogs.bot_admin.bot_reload",
         "cogs.bot_admin.announce_control",
+        "cogs.bot_admin.relay_admin_commands",
         "cogs.guild_admin.relaylist",
     ),
     "commands": ("cogs.commands.ping",),
@@ -73,6 +74,7 @@ def register_events(bot: commands.Bot, profile: BotProfile) -> None:
     @bot.event
     async def on_ready():
         guild_configs.ensure_all(bot.guilds)
+        await sync_app_commands(bot, profile)
         log.info("MAIN", f"[{profile.id}] Bot logged in as {bot.user} (ID: {bot.user.id})")
 
     @bot.event
@@ -84,6 +86,28 @@ def register_events(bot: commands.Bot, profile: BotProfile) -> None:
             await notify_admins(bot, "⚠️ 未預期錯誤", f"**Bot：** `{profile.id}`\n**事件：** `{event}`\n```{tb[:1500]}```")
         except Exception:
             pass
+
+
+async def sync_app_commands(bot: commands.Bot, profile: BotProfile) -> None:
+    if getattr(bot, "_mctw_app_commands_synced", False):
+        return
+    bot._mctw_app_commands_synced = True
+
+    config = load_config()
+    guild_ids = config.get("slash_commands", {}).get("guild_ids", [])
+    try:
+        if guild_ids:
+            for guild_id in guild_ids:
+                guild = discord.Object(id=int(guild_id))
+                bot.tree.copy_global_to(guild=guild)
+                synced = await bot.tree.sync(guild=guild)
+                log.info("SLASH", f"[{profile.id}] Synced {len(synced)} command(s) to guild {guild_id}")
+            return
+
+        synced = await bot.tree.sync()
+        log.info("SLASH", f"[{profile.id}] Synced {len(synced)} global command(s)")
+    except Exception as exc:
+        log.warn("SLASH", f"[{profile.id}] App command sync failed: {exc}")
 
 
 async def load_extensions(bot: commands.Bot, profile: BotProfile, config: dict) -> None:
