@@ -169,7 +169,7 @@ Slash 指令的參數詳細說明：
 | `hidden` | 布林 | 是否在 `!relaylist` 隱藏（預設 `false`） |
 | `group` | 文字（自動補全） | 目標 group 名稱 |
 | `new_name` | 文字 | 改名（不填則保留） |
-| `channel` | 頻道選擇器 | 只接受一般文字頻道與論壇頻道；可從選單選取或直接輸入頻道 ID，也支援在 DM 中指定其他伺服器的頻道（bot 需已加入該伺服器） |
+| `channel` | 文字（頻道 ID 或 `#頻道`） | 輸入頻道 ID 或 `#頻道` mention；只接受一般文字頻道與論壇頻道。刻意不使用 Discord 的頻道選擇器型別，因為 Discord 會在參數驗證階段就拒絕它無法解析的 ID（顯示「指定的頻道 ID 無效」），bot 根本收不到指令 — 改用文字輸入後由 bot 自己驗證並給出明確錯誤，也支援在 DM 中指定其他伺服器的頻道（bot 需已加入該伺服器） |
 | `direction` | 選單 | `BOTH` / `SEND_ONLY` / `RECEIVE_ONLY`（預設 `BOTH`） |
 | `brand_name` | 文字 | 自訂顯示名稱（不填則自動產生） |
 | `clear_brand_name` | 布林 | 清除自訂名稱、恢復自動產生 |

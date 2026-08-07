@@ -105,55 +105,70 @@ class RelayAdminCommandsTests(unittest.TestCase):
         self.assertEqual(_channel_kind(FakeForumChannel()), "forum")
 
     # ------------------------------------------------------------------
-    # RelayChannelTransformer (DM-friendly channel option)
+    # RelayChannelTransformer (accepts channel ID / #mention as string)
     # ------------------------------------------------------------------
-    def test_transformer_uses_cache_when_available(self):
+    def test_transformer_accepts_plain_id(self):
         async def run():
             channel = FakeTextChannel()
-            value = SimpleNamespace(id=1, resolve=lambda: channel)
-            return await RelayChannelTransformer().transform(
-                SimpleNamespace(client=AsyncMock()), value
-            )
-
-        result = asyncio.run(run())
-
-        self.assertIsInstance(result, discord.TextChannel)
-
-    def test_transformer_fetches_when_cache_misses(self):
-        """DM scenario: resolve() returns None but fetch_channel succeeds."""
-        async def run():
-            channel = FakeTextChannel()
-            value = SimpleNamespace(id=1, resolve=lambda: None)
             interaction = SimpleNamespace(
-                client=SimpleNamespace(fetch_channel=AsyncMock(return_value=channel))
+                client=SimpleNamespace(fetch_channel=AsyncMock(return_value=channel)),
+                response=SimpleNamespace(send_message=AsyncMock()),
             )
-            return await RelayChannelTransformer().transform(interaction, value)
+            return await RelayChannelTransformer().transform(interaction, "123456789012345678")
 
         result = asyncio.run(run())
 
         self.assertIsInstance(result, discord.TextChannel)
+
+    def test_transformer_accepts_channel_mention(self):
+        async def run():
+            channel = FakeTextChannel()
+            interaction = SimpleNamespace(
+                client=SimpleNamespace(fetch_channel=AsyncMock(return_value=channel)),
+                response=SimpleNamespace(send_message=AsyncMock()),
+            )
+            result = await RelayChannelTransformer().transform(
+                interaction, "<#123456789012345678>"
+            )
+            interaction.client.fetch_channel.assert_called_once_with(123456789012345678)
+            return result
+
+        result = asyncio.run(run())
+
+        self.assertIsInstance(result, discord.TextChannel)
+
+    def test_transformer_rejects_non_numeric_input(self):
+        async def run():
+            interaction = SimpleNamespace(
+                client=SimpleNamespace(fetch_channel=AsyncMock()),
+                response=SimpleNamespace(send_message=AsyncMock()),
+            )
+            return await RelayChannelTransformer().transform(interaction, "not-a-channel")
+
+        with self.assertRaises(app_commands.TransformerError):
+            asyncio.run(run())
 
     def test_transformer_rejects_when_fetch_fails(self):
         async def run():
-            value = SimpleNamespace(id=999, resolve=lambda: None)
             interaction = SimpleNamespace(
                 client=SimpleNamespace(
                     fetch_channel=AsyncMock(side_effect=RuntimeError("missing"))
-                )
+                ),
+                response=SimpleNamespace(send_message=AsyncMock()),
             )
-            return await RelayChannelTransformer().transform(interaction, value)
+            return await RelayChannelTransformer().transform(interaction, "999")
 
         with self.assertRaises(app_commands.TransformerError):
             asyncio.run(run())
 
     def test_transformer_rejects_non_text_channels(self):
         async def run():
-            voice = SimpleNamespace(resolve=lambda: None)
-            value = SimpleNamespace(id=2, resolve=lambda: None)
+            voice = SimpleNamespace()
             interaction = SimpleNamespace(
-                client=SimpleNamespace(fetch_channel=AsyncMock(return_value=voice))
+                client=SimpleNamespace(fetch_channel=AsyncMock(return_value=voice)),
+                response=SimpleNamespace(send_message=AsyncMock()),
             )
-            return await RelayChannelTransformer().transform(interaction, value)
+            return await RelayChannelTransformer().transform(interaction, "2")
 
         with self.assertRaises(app_commands.TransformerError):
             asyncio.run(run())

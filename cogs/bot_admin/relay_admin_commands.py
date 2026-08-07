@@ -47,35 +47,42 @@ Direction = Literal["BOTH", "SEND_ONLY", "RECEIVE_ONLY"]
 
 
 class RelayChannelTransformer(app_commands.Transformer):
-    """Channel option that works from DMs and across guilds.
+    """Channel option accepting a channel ID or ``#channel`` mention.
 
-    discord.py's default channel transformer resolves through the guild
-    cache (``PartialChannel.resolve``), which returns ``None`` when the
-    command is invoked from a DM where the guild context is unavailable.
-    This transformer falls back to an API ``fetch_channel`` so bot admins
-    can reference channels from anywhere the bot is present.
+    Uses the STRING option type on purpose: Discord pre-validates CHANNEL
+    options against its own cache and rejects IDs it cannot resolve with
+    "指定的頻道 ID 無效" (Invalid Channel ID) *before* the interaction ever
+    reaches the bot — even from DMs when the bot is in the guild. With a
+    string option the bot resolves the channel itself via ``fetch_channel``
+    and reports a clear Chinese error when it cannot.
     """
 
     @property
     def type(self) -> discord.AppCommandOptionType:
-        return discord.AppCommandOptionType.channel
-
-    @property
-    def channel_types(self) -> list[discord.ChannelType]:
-        # Keep the channel picker limited to text-like channels.
-        return [discord.ChannelType.text, discord.ChannelType.news, discord.ChannelType.forum]
+        return discord.AppCommandOptionType.string
 
     async def transform(self, interaction: discord.Interaction, value, /) -> RelayChannel:
-        resolved = value.resolve()
-        if isinstance(resolved, (discord.TextChannel, discord.ForumChannel)):
-            return resolved
+        raw = str(value).strip()
+        # Accept both "123456789012345678" and "<#123456789012345678>"
+        if raw.startswith("<#") and raw.endswith(">"):
+            raw = raw[2:-1]
         try:
-            channel = await interaction.client.fetch_channel(value.id)
+            channel_id = int(raw)
+        except ValueError:
+            await interaction.response.send_message(
+                f"❌ 無效的頻道格式：{value}。請輸入頻道 ID 或 #頻道。", ephemeral=True
+            )
+            raise app_commands.TransformerError(value, discord.AppCommandOptionType.string, self)
+        try:
+            channel = await interaction.client.fetch_channel(channel_id)
         except Exception:
             channel = None
         if isinstance(channel, (discord.TextChannel, discord.ForumChannel)):
             return channel
-        raise app_commands.TransformerError(value, discord.AppCommandOptionType.channel, self)
+        await interaction.response.send_message(
+            "❌ 找不到頻道：請確認 bot 已加入該伺服器、且頻道是文字或論壇頻道。", ephemeral=True
+        )
+        raise app_commands.TransformerError(value, discord.AppCommandOptionType.string, self)
 
 _PERMISSION_DENIED = "❌ 只有 bot_admins 且啟用 exclusive_command 的管理員才能使用此指令。"
 
@@ -196,7 +203,7 @@ class RelayChannelSub(app_commands.Group):
 
     interaction_check = staticmethod(_interaction_check)
 
-    @app_commands.command(name="add", description="新增頻道到 relay group")
+    @app_commands.command(name="add", description="新增頻道到 relay group（channel 請輸入頻道 ID 或 #頻道）")
     async def add(
         self,
         interaction: discord.Interaction,
@@ -220,7 +227,7 @@ class RelayChannelSub(app_commands.Group):
             ),
         )
 
-    @app_commands.command(name="edit", description="編輯 relay 頻道設定（可搬移 group、清空品牌名稱）")
+    @app_commands.command(name="edit", description="編輯 relay 頻道設定（channel 請輸入頻道 ID 或 #頻道）")
     async def edit(
         self,
         interaction: discord.Interaction,
@@ -246,7 +253,7 @@ class RelayChannelSub(app_commands.Group):
             )[0],
         )
 
-    @app_commands.command(name="remove", description="從 relay group 移除頻道（保留空 group）")
+    @app_commands.command(name="remove", description="從 relay group 移除頻道（channel 請輸入頻道 ID 或 #頻道）")
     async def remove(self, interaction: discord.Interaction, channel: app_commands.Transform[RelayChannel, RelayChannelTransformer]):
         await _run(
             interaction, "relay channel remove",
