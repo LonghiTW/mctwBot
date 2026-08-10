@@ -2,7 +2,7 @@
 import asyncio
 import unittest
 from types import SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 import discord
 
@@ -11,6 +11,11 @@ from cogs.relay.message_sync import MessageSync
 
 def _run(coro):
     return asyncio.run(coro)
+
+
+def _no_sleep():
+    """Context manager that makes asyncio.sleep return instantly."""
+    return patch("asyncio.sleep", new=AsyncMock())
 
 
 class FakeMember(discord.Member):
@@ -64,8 +69,34 @@ class ReverseDeleteBypassTests(unittest.TestCase):
         sync = MessageSync(None)
 
         with patch("cogs.relay.message_sync.bot_admin_ids_with_feature", return_value={111}), \
-             patch("cogs.relay.message_sync.bot_admin_has_feature", return_value=True):
+             patch("cogs.relay.message_sync.bot_admin_has_feature", return_value=True), \
+             _no_sleep():
             self.assertTrue(_run(sync._bot_admin_reverse_delete(guild, "123")))
+
+    def test_granted_after_audit_log_delay(self):
+        """Audit log entries can lag; the scan retries until the entry appears."""
+        calls = {"count": 0}
+
+        async def audit_logs(action, limit):
+            calls["count"] += 1
+            if calls["count"] == 1:
+                return  # first attempt: entry not written yet
+            yield SimpleNamespace(
+                target=SimpleNamespace(id=123),
+                user=SimpleNamespace(id=111),
+            )
+
+        guild = SimpleNamespace(
+            me=FakeMember(view_audit_log=True),
+            audit_logs=audit_logs,
+        )
+        sync = MessageSync(None)
+
+        with patch("cogs.relay.message_sync.bot_admin_ids_with_feature", return_value={111}), \
+             patch("cogs.relay.message_sync.bot_admin_has_feature", return_value=True), \
+             _no_sleep():
+            self.assertTrue(_run(sync._bot_admin_reverse_delete(guild, "123")))
+        self.assertEqual(calls["count"], 2)
 
     def test_denied_when_non_admin_deleted(self):
         async def audit_logs(action, limit):
@@ -81,7 +112,8 @@ class ReverseDeleteBypassTests(unittest.TestCase):
         sync = MessageSync(None)
 
         with patch("cogs.relay.message_sync.bot_admin_ids_with_feature", return_value={111}), \
-             patch("cogs.relay.message_sync.bot_admin_has_feature", return_value=False):
+             patch("cogs.relay.message_sync.bot_admin_has_feature", return_value=False), \
+             _no_sleep():
             self.assertFalse(_run(sync._bot_admin_reverse_delete(guild, "123")))
 
     def test_denied_when_audit_entry_not_found(self):
@@ -98,12 +130,14 @@ class ReverseDeleteBypassTests(unittest.TestCase):
         sync = MessageSync(None)
 
         with patch("cogs.relay.message_sync.bot_admin_ids_with_feature", return_value={111}), \
-             patch("cogs.relay.message_sync.bot_admin_has_feature", return_value=True):
+             patch("cogs.relay.message_sync.bot_admin_has_feature", return_value=True), \
+             _no_sleep():
             self.assertFalse(_run(sync._bot_admin_reverse_delete(guild, "123")))
 
     def test_denied_on_forbidden(self):
         async def audit_logs(action, limit):
-            raise discord.Forbidden("no")
+            resp = SimpleNamespace(status=403, reason="Forbidden")
+            raise discord.Forbidden(resp, "Forbidden")
             yield  # pragma: no cover - makes this an async generator
 
         guild = SimpleNamespace(
@@ -112,7 +146,8 @@ class ReverseDeleteBypassTests(unittest.TestCase):
         )
         sync = MessageSync(None)
 
-        with patch("cogs.relay.message_sync.bot_admin_ids_with_feature", return_value={111}):
+        with patch("cogs.relay.message_sync.bot_admin_ids_with_feature", return_value={111}), \
+             _no_sleep():
             self.assertFalse(_run(sync._bot_admin_reverse_delete(guild, "123")))
 
 

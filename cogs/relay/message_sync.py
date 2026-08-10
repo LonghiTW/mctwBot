@@ -36,21 +36,24 @@ class MessageSync:
         if not allow:
             allow = await self._bot_admin_reverse_delete(guild, relayed_message_id)
         if not allow:
+            log.info("DEL-REV", f"Reverse delete denied for relayed copy {relayed_message_id}")
             return True
         try:
             channel = await self.bot.fetch_channel(int(link["original_channel_id"]))
             original = await channel.fetch_message(int(link["original_message_id"]))
             await original.delete()
-        except Exception:
-            pass
+            log.info("DEL-REV", f"Reverse deleted original {link['original_message_id']} (triggered by {relayed_message_id})")
+        except Exception as exc:
+            log.warn("DEL-REV", f"Reverse delete failed for {relayed_message_id}: {exc}")
         return True
 
     async def _bot_admin_reverse_delete(self, guild: discord.Guild | None, relayed_message_id: str) -> bool:
         """True if a bot admin with ``relay_reverse_delete`` deleted this relayed copy.
 
         The deleter is identified via the guild audit log (requires ``View Audit
-        Log``). If the entry cannot be found or the permission is missing, the
-        bypass is denied — unknown deleters never get reverse delete.
+        Log``). Audit log entries can lag behind the delete event by a second or
+        two, so the scan is retried briefly before giving up. Unknown deleters
+        never get reverse delete.
         """
         if guild is None:
             return False
@@ -59,20 +62,27 @@ class MessageSync:
         me = guild.me
         if me is None or not me.guild_permissions.view_audit_log:
             return False
-        try:
-            async for entry in guild.audit_logs(action=discord.AuditLogAction.message_delete, limit=10):
-                if str(getattr(entry.target, "id", "")) != str(relayed_message_id):
-                    continue
-                user = entry.user
-                if user is not None and bot_admin_has_feature(user.id, "relay_reverse_delete"):
-                    log.info("DEL-REV-BYPASS", f"Bot admin {user} ({user.id}) reverse-deleted {relayed_message_id}")
-                    return True
+
+        for attempt in range(3):
+            try:
+                async for entry in guild.audit_logs(
+                    action=discord.AuditLogAction.message_delete, limit=25
+                ):
+                    if str(getattr(entry.target, "id", "")) != str(relayed_message_id):
+                        continue
+                    user = entry.user
+                    if user is not None and bot_admin_has_feature(user.id, "relay_reverse_delete"):
+                        log.info("DEL-REV-BYPASS", f"Bot admin {user} ({user.id}) reverse-deleted {relayed_message_id}")
+                        return True
+                    return False
+            except discord.Forbidden:
                 return False
-        except discord.Forbidden:
-            return False
-        except Exception as exc:
-            log.warn("DEL-REV", f"Audit log scan failed: {exc}")
-            return False
+            except Exception as exc:
+                log.warn("DEL-REV", f"Audit log scan failed: {exc}")
+                return False
+            if attempt < 2:
+                await asyncio.sleep(0.5)
+        log.warn("DEL-REV", f"Audit log entry not found for {relayed_message_id} after retries")
         return False
 
     async def sync_forward_delete(self, original_message_id: str, channel_id: str) -> bool:
