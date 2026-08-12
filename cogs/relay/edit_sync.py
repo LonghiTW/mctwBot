@@ -11,7 +11,6 @@ from .routing import linked_channel_id_for_message
 from .rendering import (
     append_attachment_previews,
     build_reply_embed,
-    resolve_klipy_urls,
     strip_embed_urls_from_content,
 )
 from .webhook_messages import WebhookMessageClient
@@ -92,7 +91,6 @@ class EditSync:
                 for field in embed.fields:
                     clean.add_field(name=field.name, value=field.value, inline=field.inline)
             payload_embeds.append(clean)
-        final_content, payload_embeds = await resolve_klipy_urls(final_content, payload_embeds)
         final_content = strip_embed_urls_from_content(final_content, message.embeds)
         final_content, _ = append_attachment_previews(final_content, payload_embeds, message.attachments)
 

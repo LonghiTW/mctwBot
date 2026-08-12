@@ -1,12 +1,57 @@
+import asyncio
 from types import SimpleNamespace
 import unittest
+from unittest.mock import AsyncMock
 
 from discord import StickerFormatType
 
-from cogs.relay.payload_builder import _sticker_content_type, _sticker_filename
+from cogs.relay.payload_builder import RelayPayloadBuilder, _sticker_content_type, _sticker_filename
+
+
+def _message(content):
+    return SimpleNamespace(
+        id=123,
+        content=content,
+        channel=SimpleNamespace(id=456),
+        guild=SimpleNamespace(id=789),
+        message_snapshots=[],
+        poll=None,
+        embeds=[],
+        attachments=[],
+        stickers=[],
+        reference=None,
+    )
 
 
 class StickerPayloadTests(unittest.TestCase):
+    def test_klipy_urls_are_left_for_native_webhook_unfurling(self):
+        async def resolve_emojis(content, embeds, guild):
+            return content, embeds
+
+        bot = SimpleNamespace(get_guild=lambda guild_id: SimpleNamespace(id=guild_id))
+        builder = RelayPayloadBuilder(bot, resolve_emojis)
+        original = _message("https://klipy.com/gifs/cat-meme-wave-emoji")
+        builder._download_files_for_upload = AsyncMock(return_value=(original.content, []))
+
+        payload, _meta, files = asyncio.run(
+            builder.build(
+                original=original,
+                target={"guild_id": "789", "channel_id": "456", "group_id": 1},
+                group={"group_name": "test"},
+                username="tester",
+                avatar_url="https://example.com/avatar.png",
+                content=original.content,
+                reply_embed=None,
+                is_forward=False,
+                exec_id="exec",
+                thread_route={},
+            )
+        )
+
+        self.assertEqual(payload["content"], "https://klipy.com/gifs/cat-meme-wave-emoji")
+        self.assertEqual(payload["embeds"], [])
+        self.assertEqual(files, [])
+
     def test_sticker_content_type_for_animated_formats(self):
         self.assertEqual(_sticker_content_type(StickerFormatType.gif), "image/gif")
         self.assertEqual(_sticker_content_type(StickerFormatType.apng), "image/apng")

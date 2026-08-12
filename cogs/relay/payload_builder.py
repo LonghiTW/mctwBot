@@ -8,7 +8,6 @@ from discord import Embed, Message, StickerFormatType
 from .rendering import (
     append_attachment_previews,
     format_referenced_message_text,
-    resolve_klipy_urls,
     strip_embed_urls_from_content,
 )
 
@@ -94,7 +93,6 @@ class RelayPayloadBuilder:
                     clean.add_field(name=field.name, value=field.value, inline=field.inline)
             payload_embeds.append(clean)
 
-        payload_content, payload_embeds = await resolve_klipy_urls(payload_content, payload_embeds)
         payload_content = strip_embed_urls_from_content(payload_content, original.embeds)
         target_guild = self.bot.get_guild(int(target["guild_id"]))
         payload_content, payload_embeds = await self._resolve_emojis(payload_content, payload_embeds, target_guild)
