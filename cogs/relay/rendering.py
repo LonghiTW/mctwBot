@@ -1,11 +1,8 @@
 """Rendering helpers for relay message content, embeds, and attachments."""
 import re
-
-import aiohttp
 from discord import Embed, Message
 
 _DISCORD_MSG_LIMIT = 2000
-_MAX_EMBEDS = 10
 
 # Regex to detect Klipy GIF URLs that Discord didn't auto-embed
 _KLiPY_RE = re.compile(r'https?://(?:www\.)?klipy\.com/gifs/\S+', re.IGNORECASE)
@@ -87,90 +84,6 @@ def append_attachment_previews(content: str, embeds: list, attachments) -> tuple
     if overflow:
         content += f"\n*(Note: {len(overflow)} file(s) too large: {', '.join(overflow)})*"
     return content, image_files
-
-
-async def resolve_klipy_urls(content: str, embeds: list) -> tuple[str, list]:
-    """Find Klipy GIF URLs in content, fetch the actual GIF, add as embeds.
-
-    Discord's GIF picker sometimes sends Klipy links without an embed.
-    This fetches the og:image from the Klipy page so we can embed it.
-    """
-    urls = _KLiPY_RE.findall(content)
-    if not urls:
-        return content, embeds
-
-    # Build set of already-embedded image URLs to avoid dupes
-    existing: set[str] = set()
-    for e in embeds:
-        img = getattr(e, "image", None)
-        if img and img.url:
-            existing.add(img.url.rstrip("/"))
-
-    new_embeds = list(embeds)
-    resolved: set[str] = set()
-    async with aiohttp.ClientSession() as session:
-        for url in urls:
-            clean_url = url.rstrip("/")
-            if clean_url in existing:
-                resolved.add(clean_url)
-                continue
-            try:
-                async with session.get(
-                    url, timeout=aiohttp.ClientTimeout(total=5)
-                ) as resp:
-                    if resp.status != 200:
-                        continue
-                    html = await resp.text()
-                    gif_url = None
-                    match = re.search(
-                        r'<meta\s+property="og:image"\s+content="([^"]+)"',
-                        html, re.IGNORECASE,
-                    )
-                    if match:
-                        gif_url = match.group(1)
-                    else:
-                        match = re.search(
-                            r'<meta\s+content="([^"]+)"\s+property="og:image"',
-                            html, re.IGNORECASE,
-                        )
-                        if match:
-                            gif_url = match.group(1)
-                    if gif_url and len(new_embeds) < _MAX_EMBEDS:
-                        # Klipy sometimes serves og:image as .mp4 — Discord
-                        # can't auto-play MP4 in an embed image field.
-                        # Try to find a static image version instead.
-                        if gif_url.lower().endswith('.mp4'):
-                            found = False
-                            for ext in ('.gif', '.png', '.webp'):
-                                test_url = re.sub(r'\.mp4$', ext, gif_url, flags=re.IGNORECASE)
-                                try:
-                                    async with session.head(
-                                        test_url,
-                                        timeout=aiohttp.ClientTimeout(total=3),
-                                    ) as tresp:
-                                        if tresp.status == 200:
-                                            gif_url = test_url
-                                            found = True
-                                            break
-                                except Exception:
-                                    continue
-                            if not found:
-                                continue
-                        embed = Embed(color=0x2B2D31)
-                        embed.set_image(url=gif_url)
-                        new_embeds.append(embed)
-                        existing.add(gif_url.rstrip("/"))
-                        resolved.add(clean_url)
-            except Exception:
-                pass
-
-    # Only strip Klipy URLs that were successfully resolved
-    for url in urls:
-        clean_url = url.rstrip("/")
-        if clean_url in resolved:
-            content = content.replace(url, "").strip()
-    content = re.sub(r"\s+", " ", content).strip()
-    return content, new_embeds
 
 
 def is_image_attachment(attachment) -> bool:
