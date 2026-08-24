@@ -8,7 +8,6 @@ from discord import Embed, Message, StickerFormatType
 from .rendering import (
     append_attachment_previews,
     format_referenced_message_text,
-    strip_embed_urls_from_content,
 )
 
 _DISCORD_MSG_LIMIT = 2000
@@ -71,33 +70,13 @@ class RelayPayloadBuilder:
         if len(payload_content) > _DISCORD_MSG_LIMIT:
             payload_content = payload_content[:_DISCORD_MSG_LIMIT - 50] + "...(truncated)"
 
-        if reply_embed:
-            payload_embeds.append(reply_embed)
-
-        for embed in original.embeds:
-            clean = Embed(
-                title=embed.title,
-                description=embed.description[:4096] if embed.description else None,
-                color=embed.color, url=embed.url, timestamp=embed.timestamp,
-            )
-            if embed.author:
-                clean.set_author(name=embed.author.name, url=embed.author.url, icon_url=embed.author.icon_url)
-            if embed.footer:
-                clean.set_footer(text=embed.footer.text, icon_url=embed.footer.icon_url)
-            if embed.image:
-                clean.set_image(url=embed.image.url)
-            if embed.thumbnail:
-                clean.set_thumbnail(url=embed.thumbnail.url)
-            if embed.fields:
-                for field in embed.fields:
-                    clean.add_field(name=field.name, value=field.value, inline=field.inline)
-            payload_embeds.append(clean)
-
-        payload_content = strip_embed_urls_from_content(payload_content, original.embeds)
+        # Only the reply embed is forwarded; all other URLs (Klipy, CDN, YouTube, etc.)
+        # are left in content for Discord's native unfurling on the receiving end.
         target_guild = self.bot.get_guild(int(target["guild_id"]))
-        payload_content, payload_embeds = await self._resolve_emojis(payload_content, payload_embeds, target_guild)
+        payload_content = await self._resolve_emojis(payload_content, [], target_guild)
         all_attachments = list(original.attachments) + snapshot_attachments
-        payload_content, relay_files = append_attachment_previews(payload_content, payload_embeds, all_attachments)
+        # Pass empty embeds list since we only forward reply_embed separately
+        payload_content, relay_files = append_attachment_previews(payload_content, [], all_attachments)
 
         payload_content, files = await self._download_files_for_upload(payload_content, relay_files)
 

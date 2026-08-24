@@ -11,7 +11,6 @@ from .routing import linked_channel_id_for_message
 from .rendering import (
     append_attachment_previews,
     build_reply_embed,
-    strip_embed_urls_from_content,
 )
 from .webhook_messages import WebhookMessageClient
 from .message_store import RelayMessageStore
@@ -72,27 +71,9 @@ class EditSync:
         if len(final_content) > _DISCORD_MSG_LIMIT:
             final_content = final_content[:_DISCORD_MSG_LIMIT - 50] + "...(truncated)"
 
-        payload_embeds = []
-        for embed in message.embeds:
-            clean = Embed(
-                title=embed.title,
-                description=embed.description[:4096] if embed.description else None,
-                color=embed.color, url=embed.url, timestamp=embed.timestamp,
-            )
-            if embed.author:
-                clean.set_author(name=embed.author.name, url=embed.author.url, icon_url=embed.author.icon_url)
-            if embed.footer:
-                clean.set_footer(text=embed.footer.text, icon_url=embed.footer.icon_url)
-            if embed.image:
-                clean.set_image(url=embed.image.url)
-            if embed.thumbnail:
-                clean.set_thumbnail(url=embed.thumbnail.url)
-            if embed.fields:
-                for field in embed.fields:
-                    clean.add_field(name=field.name, value=field.value, inline=field.inline)
-            payload_embeds.append(clean)
-        final_content = strip_embed_urls_from_content(final_content, message.embeds)
-        final_content, _ = append_attachment_previews(final_content, payload_embeds, message.attachments)
+        # Only URLs in content; native Discord unfurl handles embeds on receive side.
+        final_content, _ = await self._resolve_emojis(final_content, [], None)
+        final_content, _ = append_attachment_previews(final_content, [], message.attachments)
 
         # Reply reconstruction — fetch the referenced message once (mirrors _relay_to_target)
         replied_message: Message | None = None
@@ -120,9 +101,10 @@ class EditSync:
                     except Exception:
                         target_channel = None
                 target_guild = getattr(target_channel, "guild", None) if target_channel else None
-                edit_content, edit_embeds = await self._resolve_emojis(final_content, list(payload_embeds), target_guild)
+                edit_content, _ = await self._resolve_emojis(final_content, [], target_guild)
 
-                # Keep the reply embed in place (first embed) — otherwise edits wipe it out
+                # Build reply embed if this is a reply
+                edit_embeds = []
                 if message.reference and message.reference.message_id:
                     if reply_deleted:
                         reply_embed = Embed(color=0xB0B8C6, description="*Replying to a deleted message.*")
@@ -143,7 +125,7 @@ class EditSync:
                             if copy else str(replied_message.jump_url)
                         )
                         reply_embed = build_reply_embed(replied_message, link, deleted=False)
-                    edit_embeds = [reply_embed] + edit_embeds
+                    edit_embeds = [reply_embed]
 
                 edit_kwargs = {
                     "content": edit_content,

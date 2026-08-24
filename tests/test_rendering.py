@@ -9,20 +9,12 @@ from cogs.relay.rendering import (
     append_attachment_previews,
     format_referenced_message_text,
     is_image_attachment,
-    strip_embed_urls_from_content,
 )
 
 
 class _ImageSlot:
     def __init__(self, url=None):
         self.url = url
-
-
-class _Embed:
-    def __init__(self, url=None, image_url=None, thumbnail_url=None):
-        self.url = url
-        self.image = _ImageSlot(image_url)
-        self.thumbnail = _ImageSlot(thumbnail_url)
 
 
 def _attachment(filename, url="https://cdn.example/file.png?sig=1", content_type=None):
@@ -57,14 +49,6 @@ class RenderingTests(unittest.TestCase):
             "url": "https://cdn.example/one.png?sig=1",
             "content_type": "image/png",
         }])
-
-    def test_strip_embed_urls_from_content_keeps_klipy_urls(self):
-        content = "before https://site.example/post https://www.klipy.com/gifs/abc after"
-        embeds = [_Embed(url="https://site.example/post")]
-
-        stripped = strip_embed_urls_from_content(content, embeds)
-
-        self.assertEqual(stripped, "before https://www.klipy.com/gifs/abc after")
 
 
 if __name__ == "__main__":

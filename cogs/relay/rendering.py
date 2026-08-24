@@ -1,11 +1,7 @@
 """Rendering helpers for relay message content, embeds, and attachments."""
-import re
 from discord import Embed, Message
 
 _DISCORD_MSG_LIMIT = 2000
-
-# Regex to detect Klipy GIF URLs that Discord didn't auto-embed
-_KLiPY_RE = re.compile(r'https?://(?:www\.)?klipy\.com/gifs/\S+', re.IGNORECASE)
 
 
 def build_reply_embed(replied: Message | None, link: str | None = None, deleted: bool = False) -> Embed:
@@ -34,27 +30,6 @@ def format_referenced_message_text(content: str | None, attachments) -> str:
     if attachments:
         return f"🔗 {text}" if text else "🔗 click to see attachment"
     return text or "*(No text)*"
-
-
-def strip_embed_urls_from_content(content: str, embeds: list) -> str:
-    """Remove bare URLs from content that are already represented as rich embeds."""
-    embed_urls: set[str] = set()
-    for emb in embeds:
-        if emb.url:
-            embed_urls.add(emb.url.rstrip("/"))
-        if emb.image and emb.image.url:
-            embed_urls.add(emb.image.url.rstrip("/"))
-        if emb.thumbnail and emb.thumbnail.url:
-            embed_urls.add(emb.thumbnail.url.rstrip("/"))
-    if not embed_urls:
-        return content
-    for url in sorted(embed_urls, key=len, reverse=True):
-        if _KLiPY_RE.fullmatch(url):
-            continue
-        escaped = re.escape(url)
-        content = re.sub(rf"\s*{escaped}\s*", " ", content).strip()
-        content = re.sub(r"\s+", " ", content)
-    return content
 
 
 def append_attachment_previews(content: str, embeds: list, attachments) -> tuple[str, list]:
