@@ -110,10 +110,39 @@ def _validate_bots(bots: object, errors: list[str]) -> None:
 
 
 def _validate_global_feature_config(config: dict, errors: list[str]) -> None:
-    for feature in ("keywords", "scheduler", "moderation"):
+    for feature in ("keywords", "scheduler"):
         value = config.get(feature, {})
         if value not in ({}, None):
             errors.append(f"{feature} settings moved to config.guilds/<guild_id>.json.")
+    _validate_moderation(config.get("moderation", {}), errors)
+
+
+def _validate_moderation(moderation: object, errors: list[str]) -> None:
+    if moderation in (None, {}):
+        return
+    if not isinstance(moderation, dict):
+        errors.append("moderation must be an object.")
+        return
+    showcase = moderation.get("showcase", {})
+    if showcase in (None, {}):
+        return
+    if not isinstance(showcase, dict):
+        errors.append("moderation.showcase must be an object.")
+        return
+    if "enabled" in showcase and not isinstance(showcase["enabled"], bool):
+        errors.append("moderation.showcase.enabled must be true or false.")
+    areas = showcase.get("areas", [])
+    if not isinstance(areas, list):
+        errors.append("moderation.showcase.areas must be an array.")
+    else:
+        for index, area in enumerate(areas):
+            if not str(area).strip():
+                errors.append(f"moderation.showcase.areas[{index}] must be a channel id or relay group name.")
+    for key in ("bypass_roles",):
+        if key in showcase and not isinstance(showcase[key], list):
+            errors.append(f"moderation.showcase.{key} must be an array.")
+    if "hint" in showcase and not isinstance(showcase["hint"], str):
+        errors.append("moderation.showcase.hint must be a string.")
 
 
 def _validate_relay(relay: object, errors: list[str]) -> None:

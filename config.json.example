@@ -42,6 +42,15 @@
 
   "commands": {},
 
+  "moderation": {
+    "showcase": {
+      "enabled": true,
+      "areas": [],
+      "bypass_roles": [],
+      "hint": ""
+    }
+  },
+
   "relay": {
     "prune_days": 7,
     "emoji_cache_guild_id": "",
