@@ -73,7 +73,7 @@ class RelayPayloadBuilder:
         # Only the reply embed is forwarded; all other URLs (Klipy, CDN, YouTube, etc.)
         # are left in content for Discord's native unfurling on the receiving end.
         target_guild = self.bot.get_guild(int(target["guild_id"]))
-        payload_content = await self._resolve_emojis(payload_content, [], target_guild)
+        payload_content, _ = await self._resolve_emojis(payload_content, [], target_guild)
         all_attachments = list(original.attachments) + snapshot_attachments
         # Pass empty embeds list since we only forward reply_embed separately
         payload_content, relay_files = append_attachment_previews(payload_content, [], all_attachments)
