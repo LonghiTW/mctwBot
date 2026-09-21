@@ -19,8 +19,8 @@ from app.config_sync import load_config
 from database import DatabaseManager
 
 DEFAULT_HINT = (
-    "本頻道僅供作品展示，請勿發送純文字訊息。"
-    "請使用討論串討論，或移駕其他聊天頻道。"
+    "本頻道僅供作品展示，若想討論請開啟討論串或移駕其他頻道。"
+    "本提示將於 15 秒後刪除。"
 )
 
 
