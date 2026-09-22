@@ -70,6 +70,9 @@ class RelayPayloadBuilder:
         if len(payload_content) > _DISCORD_MSG_LIMIT:
             payload_content = payload_content[:_DISCORD_MSG_LIMIT - 50] + "...(truncated)"
 
+        if reply_embed:
+            payload_embeds.append(reply_embed)
+
         # Only the reply embed is forwarded; all other URLs (Klipy, CDN, YouTube, etc.)
         # are left in content for Discord's native unfurling on the receiving end.
         target_guild = self.bot.get_guild(int(target["guild_id"]))

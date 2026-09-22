@@ -9,7 +9,7 @@
 | **Relay** | 跨伺服器訊息橋接 — 支援文字頻道、討論串、論壇貼文的雙向同步；並提供 relay 管理指令（`!reload`、`!announce`、`!relaylist`） | ✅ 單一 bot profile 可啟用 |
 | **Keywords** | 被動關鍵字回應 — 「你好/hello」「生日/birthday/hbd」 | ✅ 可關閉 |
 | **Scheduler** | 定時任務 — 週五日落 gif、週日 21:00 圖片 | ✅ 可關閉 |
-| **Moderation** | 頻道與成員管理，目前包含 Welcome Cleaner | ✅ 可關閉 |
+| **Moderation** | 頻道與成員管理，包含 Welcome Cleaner 與 Showcase Guard | ✅ 可關閉 |
 | **Commands** | 基本指令模組，目前包含 `!ping` | ✅ 可關閉 |
 | **Admin** | 管理員功能，目前包含 JSON 訊息控制（`!msg` 系列） | ✅ 可關閉 |
 
@@ -50,7 +50,7 @@ python run.py
 
 ### `config.json` — 全域功能設定
 
-`config.json` 控制 bot profile、全域管理員、通知與跨服 relay。單一伺服器功能（keywords、scheduler、moderation）的細項設定不放在這裡，改由 `config.guilds/{guild_id}.json` 控制。
+`config.json` 控制 bot profile、全域管理員、通知、跨服 relay，以及 Showcase Guard 的全域設定。Keywords、Scheduler 與 Welcome Cleaner 等單一伺服器功能的細項設定，則由 `config.guilds/{guild_id}.json` 控制。
 
 #### `bot_admins` — Bot 管理員與功能節點
 
@@ -221,6 +221,42 @@ Slash 指令同步設定。可選，預設為全域同步：
 
 - 留空或省略 `guild_ids` 時，指令會同步到所有伺服器（全域同步，更新可能需要最多 1 小時才生效）。
 - 填入 guild ID 可讓 `/relay` 指令只在指定測試伺服器出現，避免開發期間干擾正式環境。
+
+#### `moderation.showcase` — Showcase Guard
+
+Showcase Guard 用來維持作品展示頻道的整潔：刪除指定頻道中的純文字訊息，並回覆提示訊息（提示會在 15 秒後自動刪除）。以下內容會放行：
+
+- 含圖片的附件
+- 含圖片或影片的 embed
+- `youtube.com` 或 `youtu.be` 影片連結
+- 展示頻道底下的討論串訊息
+
+貼圖不會被視為有效展示內容。擁有 Discord「管理訊息」權限的成員，以及列在 `bypass_roles` 的身分組成員會被豁免。
+
+此設定位於 `config.json`，不需要在每個 `config.guilds/{guild_id}.json` 重複設定：
+
+```json
+"moderation": {
+  "showcase": {
+    "enabled": true,
+    "areas": [
+      "123456789012345678",
+      "作品展示"
+    ],
+    "bypass_roles": [],
+    "hint": ""
+  }
+}
+```
+
+| 欄位 | 說明 |
+|------|------|
+| `enabled` | 是否啟用 Showcase Guard |
+| `areas` | 適用區域；純數字視為頻道 ID，其他文字視為 relay group 名稱，並套用該群組的所有頻道 |
+| `bypass_roles` | 豁免身分組 ID 陣列；空陣列表示不額外豁免任何身分組 |
+| `hint` | 刪除純文字訊息後的提示文字；留空使用預設提示 |
+
+Bot profile 必須啟用 `features.moderation`。直接修改 Showcase 設定後會在下一則訊息即時讀取；如果同時修改 relay group 的頻道成員，則需要使用 `!reload` 或重啟，以同步 relay 資料庫。
 
 ### `config.guilds/{guild_id}.json` — 單服功能設定
 
@@ -417,7 +453,7 @@ Bot/
 - 同步副本會保留使用者、身分組、頻道標註，但不會觸發 ping；只有原始訊息所在頻道會通知
 - 圖片附件會以圖片預覽 embed 同步；非圖片附件仍以連結同步
 - 啟動時會先驗證 `config.json`，並在 bot ready 後補齊 `config.guilds/{guild_id}.json`
-- `config.json` 只放全域設定；`keywords`、`scheduler`、`moderation` 細項請放在單服設定檔
+- `config.json` 放全域設定與 Showcase Guard；`keywords`、`scheduler`、`moderation.welcome_cleaner` 細項請放在單服設定檔
 - 修改設定後可用 `!reload` 重新載入 `config.json`、同步 relay，並清除/重讀單服設定快取
 - `/relay` slash 指令同樣直接改 `config.json`（自動備份 + 原子寫入 + 同步），修改後不需要再手動 `!reload`
 - Slash 指令預設全域同步；開發期可在 `config.json` 的 `slash_commands.guild_ids` 指定測試伺服器，讓指令更新即時生效

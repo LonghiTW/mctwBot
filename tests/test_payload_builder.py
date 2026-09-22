@@ -52,6 +52,32 @@ class StickerPayloadTests(unittest.TestCase):
         self.assertEqual(payload["embeds"], [])
         self.assertEqual(files, [])
 
+    def test_reply_embed_is_forwarded(self):
+        async def resolve_emojis(content, embeds, guild):
+            return content, embeds
+
+        bot = SimpleNamespace(get_guild=lambda guild_id: SimpleNamespace(id=guild_id))
+        builder = RelayPayloadBuilder(bot, resolve_emojis)
+        reply_embed = SimpleNamespace(to_dict=lambda: {"description": "Replying to message"})
+        original = _message("reply content")
+
+        payload, _meta, _files = asyncio.run(
+            builder.build(
+                original=original,
+                target={"guild_id": "789", "channel_id": "456", "group_id": 1},
+                group={"group_name": "test"},
+                username="tester",
+                avatar_url="https://example.com/avatar.png",
+                content=original.content,
+                reply_embed=reply_embed,
+                is_forward=False,
+                exec_id="exec",
+                thread_route={},
+            )
+        )
+
+        self.assertEqual(payload["embeds"], [{"description": "Replying to message"}])
+
     def test_sticker_content_type_for_animated_formats(self):
         self.assertEqual(_sticker_content_type(StickerFormatType.gif), "image/gif")
         self.assertEqual(_sticker_content_type(StickerFormatType.apng), "image/apng")
