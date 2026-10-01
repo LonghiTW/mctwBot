@@ -28,7 +28,7 @@ FEATURE_EXTENSIONS = {
         "cogs.bot_admin.relay_admin_commands",
         "cogs.guild_admin.relaylist",
     ),
-    "commands": ("cogs.commands.ping",),
+    "commands": ("cogs.commands.ping", "cogs.commands.privacy"),
     # Generic guild-admin JSON message control — independent of relay
     "admin": ("cogs.guild_admin.message_control",),
 }

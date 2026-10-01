@@ -135,7 +135,7 @@ $env:DATABASE_PATH = "data/database.encrypted.db"
 
 `features` 使用大分類控制 Cog 載入，所有功能預設都是 `false`，需要的模組必須在各 profile 中明確啟用。`relay`、`commands`、`admin` 是全域功能；`keywords`、`scheduler`、`moderation` 啟用後，仍會再依每個伺服器的 `config.guilds/{guild_id}.json` 決定是否執行。
 
-> `commands` 目前只載入 `ping`。`admin` 提供與 relay 無關的 JSON 訊息控制（`!msg` 系列）；relay 管理指令（`!reload`、`!announce`、`!relaylist`）會隨 `relay` feature 一起載入，因此只有在啟用 relay 的 profile 上可用。
+> `commands` 目前載入 `ping` 與 `/privacy`。`admin` 提供與 relay 無關的 JSON 訊息控制（`!msg` 系列）；relay 管理指令（`!reload`、`!announce`、`!relaylist`）會隨 `relay` feature 一起載入，因此只有在啟用 relay 的 profile 上可用。
 
 #### `commands`
 
@@ -167,7 +167,7 @@ Commands 類功能目前提供基本指令：
 !relaydelete message_id                      # relay_reverse_delete bot 管理員刪除原始訊息與全部同步副本
 ```
 
-使用者可使用 `/relay-privacy allow_relay:false` 停止後續訊息中繼及編輯同步，或設為 `true` 重新允許；`/privacy` 顯示政策連結。退出不會自動刪除已送出的 Discord 副本或既有映射，既有映射依 30 天期限清除。
+使用者可使用 `/relay-privacy allow_relay:false` 停止後續訊息中繼及編輯同步，或設為 `true` 重新允許；`/privacy`（`commands` feature，任何 profile 皆可提供）顯示政策連結。退出不會自動刪除已送出的 Discord 副本或既有映射，既有映射依 30 天期限清除。
 
 **Relay Slash 指令**（僅在啟用 `relay` 的 profile 上載入；需在 `bot_admins` 且啟用 `exclusive_command`；與 `!reload` 相同權限門檻）：
 

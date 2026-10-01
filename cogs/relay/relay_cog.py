@@ -12,7 +12,6 @@ from discord import Embed, Message, app_commands
 from discord.ext import commands, tasks
 
 from database import DatabaseManager
-from app.config import PRIVACY_POLICY_URL
 from app.bot_admins import bot_admin_has_feature
 from utils.log_manager import LogManager
 from utils.time_utils import snowflake_before
@@ -151,14 +150,6 @@ class RelayCog(commands.Cog):
             )
             response = "✅ 已停止中繼你後續的訊息及同步其編輯；既有同步訊息依頻道刪除設定處理。"
         db.commit()
-        await interaction.response.send_message(response, ephemeral=True)
-
-    @app_commands.command(name="privacy", description="查看 MCTW Bot 隱私權政策")
-    async def privacy(self, interaction: discord.Interaction):
-        if PRIVACY_POLICY_URL:
-            response = f"MCTW Bot 隱私權政策：<{PRIVACY_POLICY_URL}>"
-        else:
-            response = "隱私權政策連結尚未設定，請聯絡此 Bot 的管理員。"
         await interaction.response.send_message(response, ephemeral=True)
 
     # ------------------------------------------------------------------
