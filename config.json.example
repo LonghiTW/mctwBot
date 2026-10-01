@@ -52,7 +52,6 @@
   },
 
   "relay": {
-    "prune_days": 7,
     "emoji_cache_guild_id": "",
     "groups": [
       {

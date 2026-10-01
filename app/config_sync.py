@@ -9,6 +9,7 @@ from database import DatabaseManager
 from utils.log_manager import LogManager
 from utils.admin_notifier import notify_admins
 from utils.channel_utils import fetch_configurable_channel
+from utils.bot_avatar import ensure_webhook_avatar, fetch_bot_avatar
 
 log = LogManager
 
@@ -29,6 +30,38 @@ def load_config() -> dict:
         return json.load(f)
 
 
+def _purge_removed_channel_data(db: DatabaseManager, channel_ids: set[str]) -> None:
+    for channel_id in channel_ids:
+        mappings = db.fetchall(
+            """SELECT group_id, source_thread_id, target_thread_id
+               FROM relay_threads
+               WHERE source_parent_channel_id = ? OR target_parent_channel_id = ?""",
+            (channel_id, channel_id),
+        )
+        stored_channel_ids = {channel_id}
+        for mapping in mappings:
+            stored_channel_ids.add(str(mapping["source_thread_id"]))
+            stored_channel_ids.add(str(mapping["target_thread_id"]))
+
+        placeholders = ",".join("?" for _ in stored_channel_ids)
+        values = tuple(stored_channel_ids)
+        db.execute(
+            f"""DELETE FROM relayed_messages
+                WHERE original_channel_id IN ({placeholders})
+                   OR relayed_channel_id IN ({placeholders})""",
+            values + values,
+        )
+        db.execute(
+            f"DELETE FROM relay_thread_notices WHERE thread_id IN ({placeholders})",
+            values,
+        )
+        db.execute(
+            """DELETE FROM relay_threads
+               WHERE source_parent_channel_id = ? OR target_parent_channel_id = ?""",
+            (channel_id, channel_id),
+        )
+
+
 async def sync_configured_relays(client: discord.Client) -> None:
     """Sync relay groups from config.json into the database.
 
@@ -39,7 +72,14 @@ async def sync_configured_relays(client: discord.Client) -> None:
     relay_cfg = config.get("relay", {})
     groups = relay_cfg.get("groups", [])
     if not groups:
-        log.info("CONFIG", "No relay groups configured, skipping sync.")
+        db = DatabaseManager()
+        db.execute("DELETE FROM relayed_messages")
+        db.execute("DELETE FROM relay_thread_notices")
+        db.execute("DELETE FROM relay_threads")
+        db.execute("DELETE FROM linked_channels")
+        db.execute("DELETE FROM relay_groups")
+        db.commit()
+        log.info("CONFIG", "No relay groups configured; removed relay configuration and mappings.")
         return
 
     db = DatabaseManager()
@@ -130,6 +170,7 @@ async def sync_configured_relays(client: discord.Client) -> None:
                 try:
                     wh = await channel.create_webhook(
                         name="MCTW Relay",
+                        avatar=await fetch_bot_avatar(client),
                         reason=f"Relay group: {group_name}",
                     )
                     webhook_url = wh.url
@@ -138,6 +179,8 @@ async def sync_configured_relays(client: discord.Client) -> None:
                         f"❌ 群組「{group_name}」頻道 {channel_id} 無法建立 webhook：{exc}"
                     )
                     continue
+            elif client is not None:
+                await ensure_webhook_avatar(client, webhook_url)
 
             db.execute(
                 """INSERT INTO linked_channels
@@ -197,6 +240,12 @@ async def sync_configured_relays(client: discord.Client) -> None:
     # Clean removed channels / groups
     if configured_channel_ids:
         ph = ",".join("?" for _ in configured_channel_ids)
+        removed_rows = db.fetchall(
+            f"SELECT channel_id FROM linked_channels WHERE channel_id NOT IN ({ph})",
+            tuple(configured_channel_ids),
+        )
+        removed_channel_ids = {str(row["channel_id"]) for row in removed_rows}
+        _purge_removed_channel_data(db, removed_channel_ids)
         db.execute(f"DELETE FROM linked_channels WHERE channel_id NOT IN ({ph})", tuple(configured_channel_ids))
         db.commit()
     if configured_group_names:

@@ -18,10 +18,18 @@ class _FakeDb:
 
 
 class _FakeReaction:
-    def __init__(self, emoji, count, me):
+    def __init__(self, emoji, count, me, users=None):
         self.emoji = emoji
         self.count = count
         self.me = me
+        # User ids that "have" the reaction, excluding the bot unless specified.
+        self._users = list(users) if users is not None else []
+
+    def users(self, limit=None):
+        async def _gen():
+            for user in self._users:
+                yield user
+        return _gen()
 
 
 class _FakeMessage:
@@ -144,9 +152,9 @@ class ReactionSyncTests(unittest.TestCase):
             def fetchone(self, query, params=()):
                 return None
 
-        msg10 = _FakeMessage([_FakeReaction(emoji, count=1, me=True)])  # only bot left
-        msg20 = _FakeMessage([_FakeReaction(emoji, count=2, me=True)])  # bot + one user
-        msg30 = _FakeMessage([_FakeReaction(emoji, count=1, me=True)])  # only bot left
+        msg10 = _FakeMessage([_FakeReaction(emoji, count=1, me=True, users=[SimpleNamespace(id=999)])])  # only bot
+        msg20 = _FakeMessage([_FakeReaction(emoji, count=2, me=True, users=[SimpleNamespace(id=999), SimpleNamespace(id=7)])])  # bot + one user
+        msg30 = _FakeMessage([_FakeReaction(emoji, count=1, me=True, users=[SimpleNamespace(id=999)])])  # only bot
         channels = {
             10: _FakeChannel(SimpleNamespace(id=1), msg10),
             20: _FakeChannel(SimpleNamespace(id=2), msg20),
@@ -187,9 +195,9 @@ class ReactionSyncTests(unittest.TestCase):
             def fetchone(self, query, params=()):
                 return None
 
-        msg10 = _FakeMessage([_FakeReaction(emoji, count=1, me=True)])  # only bot
+        msg10 = _FakeMessage([_FakeReaction(emoji, count=1, me=True, users=[SimpleNamespace(id=999)])])  # only bot
         msg20 = _FakeMessage([])                                        # nobody
-        msg30 = _FakeMessage([_FakeReaction(emoji, count=1, me=True)])  # only bot
+        msg30 = _FakeMessage([_FakeReaction(emoji, count=1, me=True, users=[SimpleNamespace(id=999)])])  # only bot
         channels = {
             10: _FakeChannel(SimpleNamespace(id=1), msg10),
             20: _FakeChannel(SimpleNamespace(id=2), msg20),
@@ -217,6 +225,48 @@ class ReactionSyncTests(unittest.TestCase):
         self.assertEqual(msg10.removed, [emoji])
         self.assertEqual(msg20.removed, [emoji])
         self.assertEqual(msg30.removed, [emoji])
+
+    def test_remove_clears_when_bot_reaction_me_flag_is_unreliable(self):
+        emoji = SimpleNamespace(id=123, name="panda", animated=False)
+
+        class _Db:
+            def fetchall(self, query, params=()):
+                return [
+                    {"relayed_message_id": "200", "relayed_channel_id": "20"},
+                ]
+
+            def fetchone(self, query, params=()):
+                return None
+
+        # The bot's own synced reaction is the only one left, but Discord reports
+        # it with me=False and count=1 (the historical regression). The old
+        # count-based check treated this as "another user still has it" and never
+        # removed it. The user-list check must still tear it down.
+        msg10 = _FakeMessage([_FakeReaction(emoji, count=1, me=False, users=[SimpleNamespace(id=999)])])
+        msg20 = _FakeMessage([_FakeReaction(emoji, count=1, me=False, users=[SimpleNamespace(id=999)])])
+        channels = {
+            10: _FakeChannel(SimpleNamespace(id=1), msg10),
+            20: _FakeChannel(SimpleNamespace(id=2), msg20),
+        }
+        bot = SimpleNamespace(
+            get_channel=lambda channel_id: channels[channel_id],
+            user=SimpleNamespace(id=999),
+        )
+
+        async def resolve_emoji(emoji, target_guild):
+            return emoji
+
+        payload = SimpleNamespace(message_id=100, channel_id=10, emoji=emoji)
+
+        original_database_manager = reactions.DatabaseManager
+        try:
+            reactions.DatabaseManager = lambda: _Db()
+            asyncio.run(ReactionSync(bot, resolve_emoji).sync(payload, add=False))
+        finally:
+            reactions.DatabaseManager = original_database_manager
+
+        self.assertEqual(msg10.removed, [emoji])
+        self.assertEqual(msg20.removed, [emoji])
 
 
 if __name__ == "__main__":

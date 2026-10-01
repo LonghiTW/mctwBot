@@ -151,6 +151,8 @@ def _validate_relay(relay: object, errors: list[str]) -> None:
     if not isinstance(relay, dict):
         errors.append("relay must be an object.")
         return
+    if "prune_days" in relay:
+        errors.append("relay.prune_days has been removed; delete it. Relay mappings are retained for a fixed 30 days.")
 
     groups = relay.get("groups", [])
     if not isinstance(groups, list):

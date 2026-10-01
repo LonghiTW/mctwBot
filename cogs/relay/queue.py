@@ -173,8 +173,8 @@ class RelayQueue:
                         db.execute(
                             """INSERT OR REPLACE INTO relay_threads
                                (group_id, source_thread_id, source_parent_channel_id,
-                                target_parent_channel_id, target_thread_id)
-                               VALUES (?, ?, ?, ?, ?)""",
+                                          target_parent_channel_id, target_thread_id, last_activity_at)
+                                         VALUES (?, ?, ?, ?, ?, unixepoch())""",
                             (
                                 meta.get("group_id"),
                                 meta.get("source_thread_id"),

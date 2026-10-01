@@ -11,7 +11,7 @@ from database import DatabaseManager
 from utils.log_manager import LogManager
 from utils.time_utils import snowflake_before
 from app.bot_admins import bot_admin_has_feature
-from app.config_sync import sync_configured_relays, load_config
+from app.config_sync import sync_configured_relays
 from app.guild_config import guild_configs
 
 log = LogManager
@@ -74,12 +74,8 @@ class BotReload(commands.Cog):
     # Prune old relay message records
     # ------------------------------------------------------------------
     def _prune_old_messages(self):
-        config = load_config()
-        days = config.get("relay", {}).get("prune_days", 7)
-        if days <= 0:
-            return
         db = DatabaseManager()
-        cutoff = snowflake_before(days)
+        cutoff = snowflake_before(30)
         result = db.execute(
             "DELETE FROM relayed_messages WHERE original_message_id < ?",
             (cutoff,),

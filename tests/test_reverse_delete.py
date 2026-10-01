@@ -1,154 +1,164 @@
-"""Tests for the relay_reverse_delete bot admin bypass in MessageSync."""
+"""Tests for the bot-admin relay chain delete command."""
 import asyncio
 import unittest
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
-import discord
-
 from cogs.relay.message_sync import MessageSync
+from cogs.relay.relay_cog import RelayCog
 
 
 def _run(coro):
     return asyncio.run(coro)
 
 
-def _no_sleep():
-    """Context manager that makes asyncio.sleep return instantly."""
-    return patch("asyncio.sleep", new=AsyncMock())
+class _FakeDb:
+    def __init__(self, original_id="100", original_channel_id="10", relayed=None, allow_reverse_delete=False):
+        self.original_id = original_id
+        self.original_channel_id = original_channel_id
+        self.allow_reverse_delete = allow_reverse_delete
+        self.relayed = relayed or [
+            {"relayed_message_id": "200", "relayed_channel_id": "20"},
+            {"relayed_message_id": "300", "relayed_channel_id": "30"},
+        ]
+        self.mappings_deleted = False
+
+    def fetchone(self, query, params=()):
+        if "SELECT allow_reverse_delete" in query:
+            return {"allow_reverse_delete": int(self.allow_reverse_delete)}
+        if "WHERE relayed_message_id = ?" in query:
+            for row in self.relayed:
+                if row["relayed_message_id"] == params[0]:
+                    return {
+                        "original_message_id": self.original_id,
+                        "original_channel_id": self.original_channel_id,
+                    }
+            return None
+        if "WHERE original_message_id = ? ORDER BY id" in query and params[0] == self.original_id:
+            return {"original_channel_id": self.original_channel_id}
+        return None
+
+    def fetchall(self, query, params=()):
+        if "WHERE original_message_id = ?" in query and params[0] == self.original_id:
+            return list(self.relayed)
+        return []
+
+    def execute(self, query, params=()):
+        if query.startswith("DELETE FROM relayed_messages"):
+            self.mappings_deleted = True
+
+    def commit(self):
+        pass
 
 
-class FakeMember(discord.Member):
-    """Minimal Member subclass standing in for discord.Member instances."""
+class _FakeOriginalMessage:
+    def __init__(self):
+        self.deleted = False
 
-    __slots__ = ("_fake_guild", "_fake_perms")
+    async def delete(self):
+        self.deleted = True
 
-    def __init__(self, view_audit_log=False):
-        self._fake_guild = SimpleNamespace(id=123)
-        self._fake_perms = SimpleNamespace(
-            manage_guild=False,
-            administrator=False,
-            view_audit_log=view_audit_log,
+
+class _FakeChannel:
+    def __init__(self, message):
+        self.message = message
+
+    async def fetch_message(self, message_id):
+        return self.message
+
+
+class RelayChainDeleteTests(unittest.TestCase):
+    def setUp(self):
+        self.db = _FakeDb()
+        self.original_message = _FakeOriginalMessage()
+        self.bot = SimpleNamespace(
+            fetch_channel=AsyncMock(return_value=_FakeChannel(self.original_message))
         )
+        self.sync = MessageSync(self.bot)
+        self.deleted_copies = []
 
-    @property
-    def guild(self):
-        return self._fake_guild
+        async def delete_message(_db, channel_id, message_id):
+            self.deleted_copies.append((str(channel_id), str(message_id)))
 
-    @property
-    def guild_permissions(self):
-        return self._fake_perms
+        self.sync.webhooks.delete_message = AsyncMock(side_effect=delete_message)
+        self.sync.mark_replied_message_deleted = AsyncMock()
 
+    def _run_chain(self, message_id):
+        with patch("cogs.relay.message_sync.DatabaseManager", return_value=self.db):
+            return _run(self.sync.delete_relay_chain(message_id))
 
-class ReverseDeleteBypassTests(unittest.TestCase):
-    def test_denied_when_no_feature_admins_configured(self):
-        guild = SimpleNamespace(me=FakeMember(view_audit_log=True))
-        sync = MessageSync(None)
+    def test_original_id_deletes_source_and_all_copies(self):
+        result = self._run_chain("100")
 
-        with patch("cogs.relay.message_sync.bot_admin_ids_with_feature", return_value=set()):
-            self.assertFalse(_run(sync._bot_admin_reverse_delete(guild, "123")))
+        self.assertEqual(result, {"found": True, "deleted": 3, "failed": []})
+        self.assertTrue(self.original_message.deleted)
+        self.assertEqual(self.deleted_copies, [("20", "200"), ("30", "300")])
+        self.assertTrue(self.db.mappings_deleted)
+        self.sync.mark_replied_message_deleted.assert_awaited_once()
 
-    def test_denied_without_view_audit_log_permission(self):
-        guild = SimpleNamespace(me=FakeMember())
-        sync = MessageSync(None)
+    def test_relayed_id_resolves_and_deletes_entire_chain(self):
+        result = self._run_chain("200")
 
-        with patch("cogs.relay.message_sync.bot_admin_ids_with_feature", return_value={111}):
-            self.assertFalse(_run(sync._bot_admin_reverse_delete(guild, "123")))
+        self.assertEqual(result["deleted"], 3)
+        self.assertTrue(self.original_message.deleted)
+        self.assertEqual(len(self.deleted_copies), 2)
 
-    def test_granted_when_bot_admin_deleted(self):
-        async def audit_logs(action, limit):
-            yield SimpleNamespace(
-                target=SimpleNamespace(id=123),
-                user=SimpleNamespace(id=111),
-            )
+    def test_unknown_id_does_not_delete_anything(self):
+        result = self._run_chain("999")
 
-        guild = SimpleNamespace(
-            me=FakeMember(view_audit_log=True),
-            audit_logs=audit_logs,
+        self.assertFalse(result["found"])
+        self.assertFalse(self.original_message.deleted)
+        self.assertEqual(self.deleted_copies, [])
+
+    def test_partial_failure_keeps_mappings_for_retry(self):
+        self.sync.webhooks.delete_message.side_effect = [None, RuntimeError("webhook unavailable")]
+
+        result = self._run_chain("100")
+
+        self.assertEqual(len(result["failed"]), 1)
+        self.assertFalse(self.db.mappings_deleted)
+        self.sync.mark_replied_message_deleted.assert_not_awaited()
+
+    def test_command_requires_bot_admin_feature(self):
+        cog = object.__new__(RelayCog)
+        cog.message_sync = self.sync
+        ctx = SimpleNamespace(author=SimpleNamespace(id=123), send=AsyncMock())
+
+        with patch("cogs.relay.relay_cog.bot_admin_has_feature", return_value=False):
+            _run(RelayCog.relaydelete.callback(cog, ctx, "100"))
+
+        ctx.send.assert_awaited_once()
+        self.bot.fetch_channel.assert_not_awaited()
+
+    def test_command_with_feature_calls_chain_delete(self):
+        cog = object.__new__(RelayCog)
+        cog.message_sync = self.sync
+        cog.message_sync.delete_relay_chain = AsyncMock(
+            return_value={"found": True, "deleted": 3, "failed": []}
         )
-        sync = MessageSync(None)
+        ctx = SimpleNamespace(author=SimpleNamespace(id=123), send=AsyncMock())
 
-        with patch("cogs.relay.message_sync.bot_admin_ids_with_feature", return_value={111}), \
-             patch("cogs.relay.message_sync.bot_admin_has_feature", return_value=True), \
-             _no_sleep():
-            self.assertTrue(_run(sync._bot_admin_reverse_delete(guild, "123")))
+        with patch("cogs.relay.relay_cog.bot_admin_has_feature", return_value=True):
+            _run(RelayCog.relaydelete.callback(cog, ctx, "100"))
 
-    def test_granted_after_audit_log_delay(self):
-        """Audit log entries can lag; the scan retries until the entry appears."""
-        calls = {"count": 0}
+        cog.message_sync.delete_relay_chain.assert_awaited_once_with("100")
+        self.assertIn("3", ctx.send.await_args.args[0])
 
-        async def audit_logs(action, limit):
-            calls["count"] += 1
-            if calls["count"] == 1:
-                return  # first attempt: entry not written yet
-            yield SimpleNamespace(
-                target=SimpleNamespace(id=123),
-                user=SimpleNamespace(id=111),
-            )
+    def test_channel_flag_false_disables_automatic_reverse_delete(self):
+        with patch("cogs.relay.message_sync.DatabaseManager", return_value=self.db):
+            handled = _run(self.sync.sync_reverse_delete("200"))
 
-        guild = SimpleNamespace(
-            me=FakeMember(view_audit_log=True),
-            audit_logs=audit_logs,
-        )
-        sync = MessageSync(None)
+        self.assertTrue(handled)
+        self.bot.fetch_channel.assert_not_awaited()
 
-        with patch("cogs.relay.message_sync.bot_admin_ids_with_feature", return_value={111}), \
-             patch("cogs.relay.message_sync.bot_admin_has_feature", return_value=True), \
-             _no_sleep():
-            self.assertTrue(_run(sync._bot_admin_reverse_delete(guild, "123")))
-        self.assertEqual(calls["count"], 2)
+    def test_channel_flag_true_keeps_automatic_reverse_delete(self):
+        self.db.allow_reverse_delete = True
 
-    def test_denied_when_non_admin_deleted(self):
-        async def audit_logs(action, limit):
-            yield SimpleNamespace(
-                target=SimpleNamespace(id=123),
-                user=SimpleNamespace(id=999),
-            )
+        with patch("cogs.relay.message_sync.DatabaseManager", return_value=self.db):
+            handled = _run(self.sync.sync_reverse_delete("200"))
 
-        guild = SimpleNamespace(
-            me=FakeMember(view_audit_log=True),
-            audit_logs=audit_logs,
-        )
-        sync = MessageSync(None)
-
-        with patch("cogs.relay.message_sync.bot_admin_ids_with_feature", return_value={111}), \
-             patch("cogs.relay.message_sync.bot_admin_has_feature", return_value=False), \
-             _no_sleep():
-            self.assertFalse(_run(sync._bot_admin_reverse_delete(guild, "123")))
-
-    def test_denied_when_audit_entry_not_found(self):
-        async def audit_logs(action, limit):
-            yield SimpleNamespace(
-                target=SimpleNamespace(id=99999),
-                user=SimpleNamespace(id=111),
-            )
-
-        guild = SimpleNamespace(
-            me=FakeMember(view_audit_log=True),
-            audit_logs=audit_logs,
-        )
-        sync = MessageSync(None)
-
-        with patch("cogs.relay.message_sync.bot_admin_ids_with_feature", return_value={111}), \
-             patch("cogs.relay.message_sync.bot_admin_has_feature", return_value=True), \
-             _no_sleep():
-            self.assertFalse(_run(sync._bot_admin_reverse_delete(guild, "123")))
-
-    def test_denied_on_forbidden(self):
-        async def audit_logs(action, limit):
-            resp = SimpleNamespace(status=403, reason="Forbidden")
-            raise discord.Forbidden(resp, "Forbidden")
-            yield  # pragma: no cover - makes this an async generator
-
-        guild = SimpleNamespace(
-            me=FakeMember(view_audit_log=True),
-            audit_logs=audit_logs,
-        )
-        sync = MessageSync(None)
-
-        with patch("cogs.relay.message_sync.bot_admin_ids_with_feature", return_value={111}), \
-             _no_sleep():
-            self.assertFalse(_run(sync._bot_admin_reverse_delete(guild, "123")))
+        self.assertTrue(handled)
+        self.assertTrue(self.original_message.deleted)
 
 
 if __name__ == "__main__":

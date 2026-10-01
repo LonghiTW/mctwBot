@@ -44,6 +44,15 @@ class GuildConfigManager:
     def reload(self) -> None:
         self._cache.clear()
 
+    def remove_guild(self, guild: discord.Guild | int | str) -> bool:
+        guild_id = _guild_id(guild)
+        self._cache.pop(guild_id, None)
+        path = self._path_for(guild_id)
+        existed = path.exists()
+        path.unlink(missing_ok=True)
+        path.with_suffix(path.suffix + ".tmp").unlink(missing_ok=True)
+        return existed
+
     def ensure_guild(self, guild: discord.Guild | int | str) -> dict[str, Any]:
         guild_id = _guild_id(guild)
         path = self._path_for(guild_id)

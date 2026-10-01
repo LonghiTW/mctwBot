@@ -1,6 +1,7 @@
 """MCTW Bot entry point with multi-profile token support."""
 import asyncio
 import sys
+from datetime import datetime, timezone
 
 import discord
 from discord.ext import commands
@@ -8,6 +9,7 @@ from discord.ext import commands
 from app.bot_profiles import BotProfile, load_bot_profiles, validate_bot_profiles
 from app.config_validator import validate_config
 from app.config_sync import load_config
+from app.relay_config_editor import prune_config_backups
 from app.guild_config import guild_configs
 from database import DatabaseManager
 from utils.log_manager import LogManager
@@ -47,12 +49,19 @@ CONFIGURED_FEATURE_EXTENSIONS = {
 }
 
 
-def create_intents() -> discord.Intents:
+def create_intents(profile: BotProfile, config: dict | None = None) -> discord.Intents:
     intents = discord.Intents.default()
-    intents.message_content = True
+    features = profile.features
+    moderation = (config or {}).get("moderation", {})
+    showcase = moderation.get("showcase", {}) if isinstance(moderation, dict) else {}
+    moderation_reads_content = bool(showcase.get("enabled", False)) if isinstance(showcase, dict) else False
+    intents.message_content = any(
+        features.get(feature, False)
+        for feature in ("relay", "keywords", "commands", "admin")
+    ) or (features.get("moderation", False) and moderation_reads_content)
     intents.guild_messages = True
     intents.guilds = True
-    intents.members = True
+    intents.members = bool(features.get("moderation", False))
     intents.webhooks = True
     intents.guild_reactions = True
     if hasattr(intents, "threads"):
@@ -60,10 +69,10 @@ def create_intents() -> discord.Intents:
     return intents
 
 
-def create_bot(profile: BotProfile) -> commands.Bot:
+def create_bot(profile: BotProfile, config: dict | None = None) -> commands.Bot:
     bot = commands.Bot(
         command_prefix=profile.command_prefix,
-        intents=create_intents(),
+        intents=create_intents(profile, config),
         help_command=None,
     )
     bot.profile = profile
@@ -111,6 +120,19 @@ async def sync_app_commands(bot: commands.Bot, profile: BotProfile) -> None:
         log.warn("SLASH", f"[{profile.id}] App command sync failed: {exc}")
 
 
+async def retention_maintenance() -> None:
+    while True:
+        now = int(datetime.now(timezone.utc).timestamp())
+        try:
+            LogManager.prune_old_logs(now)
+            removed_backups = prune_config_backups(now=now)
+            if removed_backups:
+                log.info("DATA-PRUNE", f"Removed {removed_backups} expired config backup(s).")
+        except Exception as exc:
+            log.error("RETENTION", f"File retention maintenance failed: {exc}")
+        await asyncio.sleep(60 * 60)
+
+
 async def load_extensions(bot: commands.Bot, profile: BotProfile, config: dict) -> None:
     features = profile.features
 
@@ -139,15 +161,18 @@ async def main():
     db = DatabaseManager()
     log.info("MAIN", "Database ready")
 
-    bots = [create_bot(profile) for profile in profiles]
+    bots = [create_bot(profile, config) for profile in profiles]
     for bot in bots:
         await load_extensions(bot, bot.profile, config)
 
+    maintenance_task = asyncio.create_task(retention_maintenance())
     await relay_queue.start()
     log.info("MAIN", "Relay queue started.")
 
     async def shutdown():
         log.info("MAIN", "Shutting down...")
+        maintenance_task.cancel()
+        await asyncio.gather(maintenance_task, return_exceptions=True)
         await relay_queue.stop()
         db.close()
         await asyncio.gather(*(bot.close() for bot in bots), return_exceptions=True)

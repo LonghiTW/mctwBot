@@ -144,8 +144,8 @@ async def prepare_thread_route(
             db.execute(
                 """INSERT OR IGNORE INTO relay_threads
                    (group_id, source_thread_id, source_parent_channel_id,
-                    target_parent_channel_id, target_thread_id)
-                   VALUES (?, ?, ?, ?, ?)""",
+                          target_parent_channel_id, target_thread_id, last_activity_at)
+                         VALUES (?, ?, ?, ?, ?, unixepoch())""",
                 (group_id, source_thread_id, source_parent_id,
                  str(source_message.channel.parent_id), current_thread_id),
             )
@@ -184,8 +184,8 @@ async def prepare_thread_route(
         db.execute(
             """INSERT OR REPLACE INTO relay_threads
                (group_id, source_thread_id, source_parent_channel_id,
-                target_parent_channel_id, target_thread_id)
-               VALUES (?, ?, ?, ?, ?)""",
+                     target_parent_channel_id, target_thread_id, last_activity_at)
+                    VALUES (?, ?, ?, ?, ?, unixepoch())""",
             (group_id, source_thread_id, source_parent_id,
              target_parent_channel_id, str(created.id)),
         )

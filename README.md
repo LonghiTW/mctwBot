@@ -46,7 +46,23 @@ python run.py
 | `RELAY_QUEUE_DELAY_MS` | Webhook 發送間隔毫秒（預設 600） |
 | `CONFIG_PATH` | 設定檔路徑（預設 `config.json`） |
 | `GUILD_CONFIG_DIR` | 單服設定檔目錄（預設 `config.guilds`） |
-| `DATABASE_PATH` | SQLite 資料庫路徑（預設 `data/database.db`） |
+| `DATABASE_PATH` | 加密 SQLite 資料庫路徑（預設 `data/database.db`） |
+| `DATABASE_ENCRYPTION_KEY` | SQLCipher 256-bit key，必須由部署環境安全注入；不得提交至版本控制 |
+| `PRIVACY_POLICY_URL` | 公開隱私權政策 URL，供 `/privacy` 指令回覆 |
+
+首次啟用資料庫加密時，先停止 Bot、備份既有資料庫，再建立 32-byte 隨機金鑰並遷移明文資料庫：
+
+```powershell
+python -c "import secrets; print(secrets.token_hex(32))"
+# 將輸出的金鑰安全存入部署祕密管理器/程序環境變數，不要提交至 .env.example 或原始碼
+$env:DATABASE_ENCRYPTION_KEY = "<從安全祕密儲存載入的 64 位十六進位金鑰>"
+python -m database.encryption_migration data/database.db data/database.encrypted.db
+$env:DATABASE_PATH = "data/database.encrypted.db"
+```
+
+遷移工具只建立並驗證加密副本，不會修改來源檔。確認資料筆數及備份可還原後，才切換 `DATABASE_PATH`；依部署環境程序安全退役明文資料庫及其 `-wal`/`-shm` 檔、備份。若未提供有效金鑰，Bot 會拒絕啟動，不會退回明文 SQLite。正式環境請由作業系統或外部祕密管理器注入金鑰，不要使用互動 shell 範例儲存長期祕密。
+
+主機／日誌／備份加密、Developer Portal 設定與資料刪除流程請見 [DEPLOYMENT.md](DEPLOYMENT.md)。營運者可用 `python -m tools.privacy_admin` 查詢與刪除使用者資料。
 
 ### `config.json` — 全域功能設定
 
@@ -77,7 +93,7 @@ python run.py
 |---------|------|
 | `exclusive_command` | 允許使用 `!reload`、`!announce` 與 `/relay` 系列 slash 指令（重新載入設定、廣播訊息、管理 relay 群組與頻道） |
 | `notifications` | 接收管理操作通知（DM）與錯誤通知 |
-| `relay_reverse_delete` | 刪除中繼副本時，即使頻道未開啟 `allow_reverse_delete` 也允許反刪原始訊息 |
+| `relay_reverse_delete` | 允許使用 `!relaydelete`，輸入原始訊息或任一同步訊息 ID，刪除該串全部訊息；不受頻道 `allow_reverse_delete` 限制 |
 
 - `id` 必填；`name` 僅供人類閱讀，不參與任何邏輯判斷。
 - 未列在 `bot_admins` 的成員，即使擁有伺服器 `Administrator` 權限，也**不能**使用 `!reload` / `!announce` 等 bot 級指令。
@@ -148,7 +164,10 @@ Commands 類功能目前提供基本指令：
 !msg edit message_id {"content":"新文字內容"}
 !msg delete message_id
 !msg source message_id
+!relaydelete message_id                      # relay_reverse_delete bot 管理員刪除原始訊息與全部同步副本
 ```
+
+使用者可使用 `/relay-privacy allow_relay:false` 停止後續訊息中繼及編輯同步，或設為 `true` 重新允許；`/privacy` 顯示政策連結。退出不會自動刪除已送出的 Discord 副本或既有映射，既有映射依 30 天期限清除。
 
 **Relay Slash 指令**（僅在啟用 `relay` 的 profile 上載入；需在 `bot_admins` 且啟用 `exclusive_command`；與 `!reload` 相同權限門檻）：
 
@@ -175,7 +194,7 @@ Slash 指令的參數詳細說明：
 | `clear_brand_name` | 布林 | 清除自訂名稱、恢復自動產生 |
 | `process_bot_messages` | 布林 | 是否轉發其他 bot 的訊息（預設 `false`） |
 | `allow_forward_delete` | 布林 | 順向刪除同步（預設 `true`） |
-| `allow_reverse_delete` | 布林 | 反向刪除同步（預設 `false`） |
+| `allow_reverse_delete` | 布林 | 一般使用者刪除同步副本時是否自動反刪原始訊息（預設 `false`）；bot_admins 可用 `!relaydelete` 不受此設定限制 |
 
 每次執行都會：自動備份 `config.json` → 原子寫入（通過 `validate_config` 驗證）→ 同步資料庫 → 觸發 `bot_reload` 事件 → 記錄審計日誌並 DM 通知啟用 `notifications` 的 bot 管理員。指令回覆一律為 ephemeral（只有操作者看得到）。
 
@@ -331,7 +350,7 @@ Scheduler 類功能的細項設定（需在 profile 與此伺服器都開啟 `sc
 
 | 欄位 | 說明 |
 |------|------|
-| `prune_days` | relayed_messages 資料表清理天數（預設 7） |
+| 訊息映射保留期限 | 固定 30 天；relay 設定不提供期限欄位 |
 | `groups` | 中繼群組列表，每個群組包含多個頻道 |
 
 ##### 頻道設定
@@ -388,7 +407,6 @@ Scheduler 類功能的細項設定（需在 profile 與此伺服器都開啟 `sc
 | 在討論串中發送訊息 | 在討論串中轉發 | 視需求（討論串） |
 | 管理討論串 | 討論串鎖定／封存／刪除同步 | 視需求（討論串） |
 | 管理角色 | 角色映射自動建立對應角色 | 視需求（角色映射） |
-| 檢視審計日誌 | bot 管理員的 `relay_reverse_delete` 反刪繞過（需確認刪除者身分） | 視需求 |
 
 > 基本轉發（純文字＋附件）其實只需要「**管理 Webhook** ＋ 檢視頻道 ＋ 發送訊息 ＋ 讀取訊息歷史」四項——webhook 會負責轉發的實際發送；其餘權限是啟用表情同步、討論串、角色映射、embed 等進階功能時才需要。
 
@@ -400,6 +418,7 @@ Scheduler 類功能的細項設定（需在 profile 與此伺服器都開啟 `sc
 | `!relaylist` | 管理伺服器 或 管理員 | 無（只讀 relay 設定） |
 | `!reload` | bot_admins 且啟用 `exclusive_command` | 管理 Webhook（同步時建立 webhook） |
 | `!announce` | bot_admins 且啟用 `exclusive_command` | 發送訊息、嵌入連結（payload 含 embed 時） |
+| `!relaydelete` | bot_admins 且啟用 `relay_reverse_delete` | 管理 Webhook（刪除同步副本）、讀取訊息歷史及管理訊息（刪除原始訊息） |
 | `/relay` 系列 | bot_admins 且啟用 `exclusive_command` | 管理 Webhook（`channel add` 同步時建立 webhook）、檢視頻道（頻道選擇器需要） |
 
 ### 單服功能
@@ -452,6 +471,7 @@ Bot/
 - Relay 功能只能在一個 bot profile 啟用
 - 同步副本會保留使用者、身分組、頻道標註，但不會觸發 ping；只有原始訊息所在頻道會通知
 - 圖片附件會以圖片預覽 embed 同步；非圖片附件仍以連結同步
+- Relay webhook 的訊息會顯示原始使用者的名稱與頭貼；webhook 個人頁面的頭貼則使用 Bot 頭貼（建立及 `!reload` 同步時套用），這是刻意的中性身分，不會逐訊息改變
 - 啟動時會先驗證 `config.json`，並在 bot ready 後補齊 `config.guilds/{guild_id}.json`
 - `config.json` 放全域設定與 Showcase Guard；`keywords`、`scheduler`、`moderation.welcome_cleaner` 細項請放在單服設定檔
 - 修改設定後可用 `!reload` 重新載入 `config.json`、同步 relay，並清除/重讀單服設定快取

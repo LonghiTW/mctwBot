@@ -40,6 +40,14 @@ class EditSync:
             return
 
         db = DatabaseManager()
+        if not message.author.bot and not message.webhook_id:
+            opted_out = db.fetchone(
+                "SELECT 1 FROM relay_opt_out WHERE user_id = ?",
+                (str(message.author.id),),
+            )
+            if opted_out:
+                return
+
         store = RelayMessageStore(db)
         if not store.has_original(str(message.id)):
             return

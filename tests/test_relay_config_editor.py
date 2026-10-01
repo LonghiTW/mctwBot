@@ -1,5 +1,7 @@
 import tempfile
 import unittest
+import os
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from app.config_validator import validate_config
@@ -12,6 +14,7 @@ from app.relay_config_editor import (
     group_names,
     remove_channel,
     remove_group,
+    prune_config_backups,
     save_config_file,
 )
 
@@ -45,6 +48,32 @@ def _base_config():
 
 
 class RelayConfigEditorTests(unittest.TestCase):
+    def test_removed_relay_prune_days_is_rejected(self):
+        config = _base_config()
+        config["relay"]["prune_days"] = 7
+
+        with self.assertRaisesRegex(RuntimeError, "relay.prune_days has been removed"):
+            validate_config(config)
+
+    def test_prune_config_backups_removes_only_files_older_than_retention(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            config_path = Path(temp_dir) / "config.json"
+            backup_dir = Path(temp_dir) / "data" / "config-backups"
+            backup_dir.mkdir(parents=True)
+            expired = backup_dir / "old.bak"
+            recent = backup_dir / "recent.bak"
+            expired.write_text("old", encoding="utf-8")
+            recent.write_text("recent", encoding="utf-8")
+            now = int(datetime.now(timezone.utc).timestamp())
+            expired_time = now - 31 * 86400
+            os.utime(expired, (expired_time, expired_time))
+
+            removed = prune_config_backups(config_path, now=now)
+
+            self.assertEqual(removed, 1)
+            self.assertFalse(expired.exists())
+            self.assertTrue(recent.exists())
+
     def test_add_group_allows_empty_group(self):
         config = add_group(_base_config(), "ops", hidden=True)
 

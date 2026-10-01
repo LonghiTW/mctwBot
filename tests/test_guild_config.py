@@ -16,6 +16,15 @@ class GuildConfigTests(unittest.TestCase):
             self.assertEqual(config["guild_id"], "123456789012345678")
             self.assertTrue((Path(temp_dir) / "123456789012345678.json").exists())
 
+    def test_remove_guild_deletes_config_and_cache(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            manager = GuildConfigManager(temp_dir)
+            manager.ensure_guild("123")
+
+            self.assertTrue(manager.remove_guild("123"))
+            self.assertFalse((Path(temp_dir) / "123.json").exists())
+            self.assertNotIn("123", manager._cache)
+
     def test_feature_and_module_enabled(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             path = Path(temp_dir) / "123.json"

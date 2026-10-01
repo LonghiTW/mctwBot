@@ -5,12 +5,15 @@ Consolidates all relay event handlers into a single Cog.
 """
 import re
 import secrets
+from datetime import datetime, timezone
 
 import discord
-from discord import Message, Embed
-from discord.ext import commands
+from discord import Embed, Message, app_commands
+from discord.ext import commands, tasks
 
 from database import DatabaseManager
+from app.config import PRIVACY_POLICY_URL
+from app.bot_admins import bot_admin_has_feature
 from utils.log_manager import LogManager
 from utils.time_utils import snowflake_before
 from app.config_sync import sync_configured_relays, load_config
@@ -58,6 +61,29 @@ class RelayCog(commands.Cog):
         self.payload_builder = RelayPayloadBuilder(bot, self.emoji_resolver.resolve_content)
         self.admin_views = RelayAdminViews(bot)
 
+    @commands.command(name="relaydelete", aliases=["relaydel"])
+    async def relaydelete(self, ctx: commands.Context, message_id: str):
+        if not bot_admin_has_feature(ctx.author.id, "relay_reverse_delete"):
+            await ctx.send("❌ 只有啟用 relay_reverse_delete 的 bot_admins 可以使用此指令。")
+            return
+        try:
+            normalized_id = str(int(message_id.strip()))
+        except ValueError:
+            await ctx.send("❌ 請輸入原始訊息或同步訊息的數字 ID。")
+            return
+
+        result = await self.message_sync.delete_relay_chain(normalized_id)
+        if not result["found"]:
+            await ctx.send(f"❌ 找不到訊息 `{normalized_id}` 的 relay 映射。")
+            return
+        if result["failed"]:
+            details = "\n".join(result["failed"][:5])
+            await ctx.send(
+                f"⚠️ 已處理 {result['deleted']} 則訊息，但有刪除失敗；映射已保留，可重試。\n{details}"
+            )
+            return
+        await ctx.send(f"✅ 整串刪除完成，共處理 {result['deleted']} 則訊息。")
+
     # ------------------------------------------------------------------
     # on_ready — sync config and prune DB
     # ------------------------------------------------------------------
@@ -69,20 +95,71 @@ class RelayCog(commands.Cog):
         await self.emoji_resolver.sync_cache_index()
         await sync_configured_relays(self.bot)
         self._prune_old_messages()
+        if not self._maintenance.is_running():
+            self._maintenance.start()
+
+    def cog_unload(self):
+        self._maintenance.cancel()
+
+    @tasks.loop(minutes=60)
+    async def _maintenance(self):
+        now = int(datetime.now(timezone.utc).timestamp())
+        try:
+            await self.thread_sync.maintain_thread_mappings(now)
+            self._prune_old_messages()
+            db = DatabaseManager()
+            cutoff = now - 30 * 24 * 60 * 60
+            warnings = db.execute(
+                "DELETE FROM user_warnings WHERE last_violation_at <= ?",
+                (cutoff,),
+            )
+            blocked = db.execute(
+                "DELETE FROM group_blacklist WHERE created_at <= ?",
+                (cutoff,),
+            )
+            db.commit()
+            if warnings.rowcount or blocked.rowcount:
+                log.info(
+                    "DATA-PRUNE",
+                    f"Removed {warnings.rowcount} expired warning(s) and {blocked.rowcount} expired block(s).",
+                )
+        except Exception as exc:
+            log.error("RETENTION", f"Scheduled retention maintenance failed: {exc}")
 
     def _prune_old_messages(self):
-        config = load_config()
-        days = config.get("relay", {}).get("prune_days", 7)
-        if days <= 0:
-            return
         db = DatabaseManager()
-        cutoff = snowflake_before(days)
+        cutoff = snowflake_before(30)
         result = db.execute(
             "DELETE FROM relayed_messages WHERE original_message_id < ?",
             (cutoff,),
         )
         db.commit()
         log.info("DB-PRUNE", f"Pruned {result.rowcount} old records.")
+
+    @app_commands.command(name="relay-privacy", description="選擇是否允許 MCTW Bot 中繼你的訊息")
+    @app_commands.describe(allow_relay="開啟以允許中繼；關閉後不再轉送你後續訊息或同步其編輯")
+    async def relay_privacy(self, interaction: discord.Interaction, allow_relay: bool):
+        db = DatabaseManager()
+        user_id = str(interaction.user.id)
+        if allow_relay:
+            db.execute("DELETE FROM relay_opt_out WHERE user_id = ?", (user_id,))
+            response = "✅ 已允許中繼你的訊息。"
+        else:
+            db.execute(
+                "INSERT OR IGNORE INTO relay_opt_out (user_id, created_at) VALUES (?, unixepoch())",
+                (user_id,),
+            )
+            response = "✅ 已停止中繼你後續的訊息及同步其編輯；既有同步訊息依頻道刪除設定處理。"
+        db.commit()
+        await interaction.response.send_message(response, ephemeral=True)
+
+    @app_commands.command(name="privacy", description="查看 MCTW Bot 隱私權政策")
+    async def privacy(self, interaction: discord.Interaction):
+        if PRIVACY_POLICY_URL:
+            response = f"MCTW Bot 隱私權政策：<{PRIVACY_POLICY_URL}>"
+        else:
+            response = "隱私權政策連結尚未設定，請聯絡此 Bot 的管理員。"
+        await interaction.response.send_message(response, ephemeral=True)
 
     # ------------------------------------------------------------------
     # on_message — core relay logic
@@ -99,6 +176,19 @@ class RelayCog(commands.Cog):
             return
 
         db = DatabaseManager()
+        if not message.author.bot and not message.webhook_id:
+            opted_out = db.fetchone(
+                "SELECT 1 FROM relay_opt_out WHERE user_id = ?",
+                (str(message.author.id),),
+            )
+            if opted_out:
+                return
+            if isinstance(message.channel, discord.Thread):
+                self.thread_sync.record_user_activity(
+                    message.channel,
+                    int(message.created_at.timestamp()),
+                )
+
         source_channel_id = linked_channel_id_for_message(message)
         source = db.fetchone(
             """SELECT * FROM linked_channels

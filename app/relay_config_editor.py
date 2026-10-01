@@ -5,6 +5,7 @@ import json
 import os
 import shutil
 from copy import deepcopy
+from datetime import datetime, timezone
 from pathlib import Path
 
 from app.config import CONFIG_PATH
@@ -53,6 +54,24 @@ def backup_config(path: Path | None = None) -> Path:
         index += 1
     shutil.copy2(config_path, backup_path)
     return backup_path
+
+
+def prune_config_backups(
+    path: Path | None = None, now: int | None = None, retention_days: int = 30,
+) -> int:
+    config_path = path or resolve_config_path()
+    backup_dir = config_path.parent / "data" / "config-backups"
+    if not backup_dir.exists():
+        return 0
+
+    current_time = now if now is not None else int(datetime.now(timezone.utc).timestamp())
+    cutoff = current_time - retention_days * 86400
+    removed = 0
+    for backup in backup_dir.iterdir():
+        if backup.is_file() and backup.stat().st_mtime < cutoff:
+            backup.unlink()
+            removed += 1
+    return removed
 
 
 def group_names(config: dict) -> list[str]:

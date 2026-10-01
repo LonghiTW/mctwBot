@@ -41,7 +41,7 @@ class MessageControl(commands.Cog):
         data = message_from_json(payload)
         await audit_admin_usage(
             self.bot, ctx, "msg send",
-            f"頻道：{channel.id} ({channel.name})\n內容：{payload}",
+            f"頻道：{channel.id} ({channel.name})",
         )
         message = await channel.send(**data)
         await ctx.send(f"Sent message: `{message.id}`")
@@ -56,10 +56,9 @@ class MessageControl(commands.Cog):
             await ctx.send("Can only edit messages sent by this bot.")
             return
         data = message_from_json(payload)
-        old_payload = json.dumps(message_to_json(message), ensure_ascii=False)
         await audit_admin_usage(
             self.bot, ctx, "msg edit",
-            f"訊息：{message_id}\n編輯前：{old_payload}\n編輯後：{payload}",
+            f"訊息：{message_id}",
         )
         await message.edit(**data)
         await ctx.send(f"Edited message: `{message.id}`")

@@ -68,32 +68,9 @@ class ReactionSync:
 
         if not add:
             # The bot's single reaction on each copy represents the whole group.
-            # Keep it while any real user still has the emoji on any copy; only
-            # tear it down once nobody has it anywhere.
-            still_active = False
-            for target_message_id, target_channel_id in all_copies:
-                channel = self.bot.get_channel(int(target_channel_id))
-                if channel is None:
-                    try:
-                        channel = await self.bot.fetch_channel(int(target_channel_id))
-                    except Exception:
-                        continue
-                try:
-                    target_guild = getattr(channel, "guild", None)
-                    resolved = str(emoji) if emoji.id is None else await self._resolve_emoji(emoji, target_guild)
-                    if resolved is None:
-                        continue
-                    message = await channel.fetch_message(int(target_message_id))
-                except (discord.NotFound, discord.Forbidden, discord.HTTPException):
-                    continue
-                for reaction in message.reactions:
-                    if reaction.emoji == resolved:
-                        if reaction.count - (1 if reaction.me else 0) > 0:
-                            still_active = True
-                        break
-                if still_active:
-                    break
-            if still_active:
+            # Keep it while any real user (excluding the bot) still has the emoji
+            # on any copy; only tear it down once nobody else has it.
+            if await self._group_still_active(all_copies, emoji):
                 log.info("REACTION-SYNC", f"Keep reactions on copies of {message_id}: users still have the emoji")
                 return
 
@@ -121,3 +98,39 @@ class ReactionSync:
                     "REACTION-SYNC",
                     f"Failed to {'add' if add else 'remove'} reaction on {target_message_id}: {exc}",
                 )
+
+    async def _group_still_active(self, all_copies, emoji: discord.PartialEmoji) -> bool:
+        """Return True while any user other than the bot still has ``emoji``.
+
+        Uses the reaction's actual user list instead of ``Reaction.count`` so a
+        stale or unexpected ``me`` flag on the bot's own reaction cannot keep the
+        synced reaction alive forever.
+        """
+        bot_id = getattr(self.bot.user, "id", None)
+        for target_message_id, target_channel_id in all_copies:
+            channel = self.bot.get_channel(int(target_channel_id))
+            if channel is None:
+                try:
+                    channel = await self.bot.fetch_channel(int(target_channel_id))
+                except Exception:
+                    continue
+            try:
+                target_guild = getattr(channel, "guild", None)
+                resolved = str(emoji) if emoji.id is None else await self._resolve_emoji(emoji, target_guild)
+                if resolved is None:
+                    continue
+                message = await channel.fetch_message(int(target_message_id))
+            except (discord.NotFound, discord.Forbidden, discord.HTTPException):
+                continue
+
+            for reaction in message.reactions:
+                if reaction.emoji != resolved:
+                    continue
+                try:
+                    users = [user async for user in reaction.users(limit=100)]
+                except (discord.NotFound, discord.Forbidden, discord.HTTPException):
+                    break
+                if any(getattr(user, "id", None) != bot_id for user in users):
+                    return True
+                break
+        return False

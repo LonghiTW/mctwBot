@@ -12,6 +12,13 @@ class RelayMessageStore:
             (original_message_id,),
         ))
 
+    def original_channel_for_original(self, original_message_id: str):
+        return self.db.fetchone(
+            """SELECT original_channel_id FROM relayed_messages
+               WHERE original_message_id = ? ORDER BY id LIMIT 1""",
+            (original_message_id,),
+        )
+
     def original_for_relayed(self, relayed_message_id: str):
         return self.db.fetchone(
             """SELECT original_message_id, original_channel_id
@@ -38,5 +45,12 @@ class RelayMessageStore:
             """DELETE FROM relayed_messages
                WHERE original_message_id = ? AND relayed_message_id = ?""",
             (original_message_id, relayed_message_id),
+        )
+        self.db.commit()
+
+    def delete_mappings_for_original(self, original_message_id: str) -> None:
+        self.db.execute(
+            "DELETE FROM relayed_messages WHERE original_message_id = ?",
+            (original_message_id,),
         )
         self.db.commit()

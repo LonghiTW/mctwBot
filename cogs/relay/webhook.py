@@ -3,6 +3,7 @@ from discord import Client, TextChannel, ForumChannel
 
 from database import DatabaseManager
 from utils.log_manager import LogManager
+from utils.bot_avatar import fetch_bot_avatar
 
 log = LogManager
 
@@ -32,6 +33,7 @@ class WebhookManager:
 
             new_wh = await channel.create_webhook(
                 name="MCTW Relay",
+                avatar=await fetch_bot_avatar(client),
                 reason=f"Auto-repair: {group_name}",
             )
             db = DatabaseManager()

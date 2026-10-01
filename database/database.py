@@ -1,8 +1,10 @@
 """SQLite database manager with migration support."""
 import os
-import sqlite3
+import re
 import threading
 from pathlib import Path
+
+from sqlcipher3 import dbapi2 as sqlite3
 
 from app.config import DATABASE_PATH
 
@@ -118,7 +120,84 @@ MIGRATIONS = [
         );
         """,
     },
+    {
+        "version": 4,
+        "description": "Retention, thread activity notices, and relay opt-out",
+        "sql": """
+        ALTER TABLE relay_threads ADD COLUMN last_activity_at INTEGER NOT NULL DEFAULT 0;
+        UPDATE relay_threads
+        SET last_activity_at = COALESCE(
+            (
+                SELECT CAST(((MAX(CAST(rm.original_message_id AS INTEGER)) >> 22) + 1420070400000) / 1000 AS INTEGER)
+                FROM relayed_messages rm
+                WHERE rm.original_channel_id IN (relay_threads.source_thread_id, relay_threads.target_thread_id)
+                   OR rm.relayed_channel_id IN (relay_threads.source_thread_id, relay_threads.target_thread_id)
+            ),
+            CAST(((CAST(source_thread_id AS INTEGER) >> 22) + 1420070400000) / 1000 AS INTEGER)
+        )
+        WHERE last_activity_at = 0;
+        ALTER TABLE group_blacklist ADD COLUMN created_at INTEGER NOT NULL DEFAULT 0;
+        UPDATE group_blacklist
+        SET created_at = COALESCE(
+            (
+                SELECT MAX(last_violation_at) FROM user_warnings
+                WHERE user_warnings.group_id = group_blacklist.group_id
+                  AND user_warnings.user_id = group_blacklist.blocked_id
+            ),
+            unixepoch()
+        )
+        WHERE created_at = 0;
+        CREATE TABLE IF NOT EXISTS relay_thread_notices (
+            group_id INTEGER NOT NULL,
+            thread_id TEXT NOT NULL,
+            activity_at INTEGER NOT NULL,
+            last_attempt_at INTEGER NOT NULL,
+            sent_at INTEGER,
+            PRIMARY KEY (group_id, thread_id, activity_at)
+        );
+        CREATE INDEX IF NOT EXISTS idx_thread_notices_attempt
+            ON relay_thread_notices(last_attempt_at);
+        CREATE TABLE IF NOT EXISTS relay_opt_out (
+            user_id TEXT PRIMARY KEY,
+            created_at INTEGER NOT NULL
+        );
+        """,
+    },
 ]
+
+_DATABASE_KEY_PATTERN = re.compile(r"^[0-9a-fA-F]{64}$")
+
+
+def _database_key() -> str:
+    key = os.getenv("DATABASE_ENCRYPTION_KEY", "").strip()
+    if not _DATABASE_KEY_PATTERN.fullmatch(key):
+        raise RuntimeError(
+            "DATABASE_ENCRYPTION_KEY must be a 64-character hexadecimal key. "
+            "Generate one with secrets.token_hex(32) and store it outside the database directory."
+        )
+    return key.lower()
+
+
+class DatabaseRow:
+    def __init__(self, cursor, values):
+        self._values = tuple(values)
+        self._column_indexes = {}
+        for index, column in enumerate(cursor.description or ()):
+            self._column_indexes.setdefault(column[0], index)
+
+    def __getitem__(self, key):
+        if isinstance(key, str):
+            key = self._column_indexes[key]
+        return self._values[key]
+
+    def __iter__(self):
+        return iter(self._values)
+
+    def __len__(self):
+        return len(self._values)
+
+    def keys(self):
+        return list(self._column_indexes)
 
 
 class DatabaseManager:
@@ -153,11 +232,20 @@ class DatabaseManager:
     @property
     def conn(self) -> sqlite3.Connection:
         if not hasattr(self._local, "conn") or self._local.conn is None:
+            key = _database_key()
             conn = sqlite3.connect(self._db_path)
-            conn.execute("PRAGMA journal_mode = WAL")
-            conn.execute("PRAGMA foreign_keys = ON")
-            conn.execute("PRAGMA busy_timeout = 5000")
-            conn.row_factory = sqlite3.Row
+            try:
+                conn.execute(f'PRAGMA key = "x\'{key}\'"')
+                conn.execute("SELECT count(*) FROM sqlite_master").fetchone()
+                conn.execute("PRAGMA journal_mode = WAL")
+                conn.execute("PRAGMA foreign_keys = ON")
+                conn.execute("PRAGMA busy_timeout = 5000")
+            except sqlite3.DatabaseError as exc:
+                conn.close()
+                raise RuntimeError(
+                    "Unable to open the encrypted database. Verify DATABASE_ENCRYPTION_KEY; "
+                    "existing plaintext databases must be migrated before startup."
+                ) from exc
             self._local.conn = conn
         return self._local.conn
 
@@ -169,7 +257,7 @@ class DatabaseManager:
                 applied_at TEXT DEFAULT (datetime('now'))
             )"""
         )
-        applied = {r["version"] for r in conn.execute("SELECT version FROM _migrations").fetchall()}
+        applied = {r[0] for r in conn.execute("SELECT version FROM _migrations").fetchall()}
         for m in MIGRATIONS:
             if m["version"] not in applied:
                 print(f"[DB] Migration v{m['version']}: {m['description']}")
@@ -181,10 +269,13 @@ class DatabaseManager:
         return self.conn.execute(sql, params)
 
     def fetchone(self, sql: str, params=()):
-        return self.conn.execute(sql, params).fetchone()
+        cursor = self.conn.execute(sql, params)
+        row = cursor.fetchone()
+        return DatabaseRow(cursor, row) if row is not None else None
 
     def fetchall(self, sql: str, params=()):
-        return self.conn.execute(sql, params).fetchall()
+        cursor = self.conn.execute(sql, params)
+        return [DatabaseRow(cursor, row) for row in cursor.fetchall()]
 
     def commit(self):
         self.conn.commit()

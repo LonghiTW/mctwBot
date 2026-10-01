@@ -38,14 +38,18 @@ class RelayFilters:
             return
         if threshold == 1:
             db.execute(
-                """INSERT OR IGNORE INTO group_blacklist (group_id, blocked_id, type) VALUES (?, ?, 'USER')""",
+                """INSERT OR IGNORE INTO group_blacklist
+                   (group_id, blocked_id, type, created_at)
+                   VALUES (?, ?, 'USER', unixepoch())""",
                 (source["group_id"], str(message.author.id)),
             )
             db.commit()
             return
         if warning_count >= threshold:
             db.execute(
-                """INSERT OR IGNORE INTO group_blacklist (group_id, blocked_id, type) VALUES (?, ?, 'USER')""",
+                """INSERT OR IGNORE INTO group_blacklist
+                   (group_id, blocked_id, type, created_at)
+                   VALUES (?, ?, 'USER', unixepoch())""",
                 (source["group_id"], str(message.author.id)),
             )
             db.commit()
@@ -61,15 +65,13 @@ class RelayFilters:
 
     async def send_warning(self, destination, user_id: int, text: str) -> None:
         try:
-            user = await self.bot.fetch_user(user_id)
-            await user.send(f"⚠️ **Relay Warning**\nServer: {destination.guild.name}\n{text}")
+            message = await destination.channel.send(
+                f"<@{user_id}> {text}",
+                delete_after=15,
+                allowed_mentions=discord.AllowedMentions(users=True, roles=False, everyone=False),
+            )
         except Exception:
-            try:
-                message = await destination.channel.send(f"<@{user_id}> {text}")
-                await asyncio.sleep(15)
-                await message.delete()
-            except Exception:
-                pass
+            return
 
     async def notify_ban(self, message: Message, group: dict, filter_row: dict, threshold: int) -> None:
         await self.send_warning(

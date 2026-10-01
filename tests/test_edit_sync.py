@@ -1,7 +1,7 @@
 """Tests for edit sync keeping the reply embed across message edits."""
 import unittest
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, Mock, patch
 
 import discord
 
@@ -127,6 +127,25 @@ class EditSyncReplyEmbedTests(unittest.TestCase):
 
         edit_message.assert_awaited_once()
         self.assertEqual(edit_message.await_args.kwargs["embeds"], [])
+
+    def test_opted_out_user_edit_is_not_synced(self):
+        async def resolve_emojis(content, embeds, guild):
+            return content, embeds
+
+        bot = SimpleNamespace(user=None)
+        sync = EditSync(bot, resolve_emojis)
+        sync.webhooks = SimpleNamespace(edit_message=AsyncMock())
+        db = SimpleNamespace(fetchone=Mock(return_value={"1": 1}))
+
+        with patch("cogs.relay.edit_sync.DatabaseManager", return_value=db), \
+                patch("cogs.relay.edit_sync.RelayMessageStore") as store:
+            _run_wrapper(sync.sync_edit(
+                _edited_message(_replied_message()),
+                {discord.MessageType.default, discord.MessageType.reply},
+            ))
+
+        store.assert_not_called()
+        sync.webhooks.edit_message.assert_not_awaited()
 
 
 def _run_wrapper(coro):
