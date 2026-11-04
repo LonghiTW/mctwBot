@@ -26,6 +26,8 @@ class RelayQueue:
         self._client = None
         self._webhook_manager = WebhookManager()
         self._cancelled: dict[str, float] = {}
+        self._pending: dict[str, dict] = {}
+        self.suppress_delete_event = None
         self._cancel_ttl = 60
         self._last_send: dict[str, float] = {}  # webhook_url -> last send timestamp
 
@@ -42,7 +44,8 @@ class RelayQueue:
 
     def _purge_cancelled(self) -> None:
         now = time.monotonic()
-        expired = [msg_id for msg_id, expires_at in self._cancelled.items() if expires_at <= now]
+        expired = [msg_id for msg_id, expires_at in self._cancelled.items()
+                   if expires_at <= now and msg_id not in self._pending]
         for msg_id in expired:
             self._cancelled.pop(msg_id, None)
 
@@ -62,7 +65,16 @@ class RelayQueue:
             await self._session.close()
             self._session = None
 
+    def pending_for_author(self, guild_id: str, author_id: str) -> list[dict]:
+        return [entry["meta"] for entry in self._pending.values()
+                if entry["meta"].get("original_guild_id") == guild_id
+                and entry["meta"].get("original_author_id") == author_id]
+
     async def add(self, webhook_url: str, payload: dict, meta: dict, files: list | None = None):
+        message_id = meta.get("original_msg_id", "")
+        if message_id:
+            entry = self._pending.setdefault(message_id, {"meta": meta, "count": 0})
+            entry["count"] += 1
         await self._queue.put({
             "webhook_url": webhook_url,
             "payload": payload,
@@ -75,19 +87,28 @@ class RelayQueue:
         while True:
             item = await self._queue.get()
             original_msg_id = item.get("meta", {}).get("original_msg_id", "")
-            if original_msg_id and self._is_cancelled(original_msg_id):
-                log.info("QUEUE-SKIP", f"Original {original_msg_id} deleted, skipping queued send")
-                continue
+            item["requeued"] = False
             try:
+                if original_msg_id and self._is_cancelled(original_msg_id):
+                    continue
                 wh_url: str = item["webhook_url"]
                 now = asyncio.get_running_loop().time()
                 since_last = now - self._last_send.get(wh_url, 0)
                 if since_last < self._delay:
                     await asyncio.sleep(self._delay - since_last)
-                await self._send(item)
-                self._last_send[wh_url] = asyncio.get_running_loop().time()
+                if not original_msg_id or not self._is_cancelled(original_msg_id):
+                    await self._send(item)
+                    self._last_send[wh_url] = asyncio.get_running_loop().time()
             except Exception as exc:
                 log.error("QUEUE", f"Critical: {exc}", exc_info=exc)
+            finally:
+                if original_msg_id and not item["requeued"]:
+                    entry = self._pending.get(original_msg_id)
+                    if entry:
+                        entry["count"] -= 1
+                        if entry["count"] == 0:
+                            self._pending.pop(original_msg_id, None)
+                self._queue.task_done()
 
     async def _send(self, item: dict):
         wh_url: str = item["webhook_url"]
@@ -128,6 +149,7 @@ class RelayQueue:
                     retry_after = float(resp.headers.get("Retry-After", 5))
                     log.warn("QUEUE-429", f"Retry after {retry_after}s", exec_id)
                     await asyncio.sleep(retry_after)
+                    item["requeued"] = True
                     await self._queue.put(item)
                     return
 
@@ -156,6 +178,7 @@ class RelayQueue:
                         if repaired and attempt < self._max_retries:
                             item["webhook_url"] = repaired.url
                             item["attempt"] += 1
+                            item["requeued"] = True
                             await self._queue.put(item)
                             log.info("QUEUE-REPAIR", f"Repaired webhook and requeued {meta.get('target_channel_id')}", exec_id)
                             return
@@ -200,14 +223,17 @@ class RelayQueue:
                         db.execute(
                             """INSERT INTO relayed_messages
                                (original_message_id, original_channel_id,
-                                relayed_message_id, relayed_channel_id, replied_to_id)
-                               VALUES (?, ?, ?, ?, ?)""",
+                                relayed_message_id, relayed_channel_id, replied_to_id,
+                                original_author_id, original_guild_id)
+                               VALUES (?, ?, ?, ?, ?, ?, ?)""",
                             (
                                 meta.get("original_msg_id"),
                                 meta.get("original_channel_id"),
                                 relayed_id,
                                 target_channel_id,
                                 meta.get("replied_to_id"),
+                                meta.get("original_author_id"),
+                                meta.get("original_guild_id"),
                             ),
                         )
                         db.commit()
@@ -225,14 +251,19 @@ class RelayQueue:
                         exec_id,
                     )
                     try:
+                        if self.suppress_delete_event:
+                            self.suppress_delete_event(str(relayed_id))
                         delete_url = f"{wh_url}/messages/{relayed_id}"
                         delete_params: dict[str, str] = {}
-                        if meta.get("target_thread_id"):
-                            delete_params["thread_id"] = meta["target_thread_id"]
+                        if meta.get("target_thread_id") or created_thread_id:
+                            delete_params["thread_id"] = str(meta.get("target_thread_id") or created_thread_id)
                         async with self._session.delete(
                             delete_url, params=delete_params, raise_for_status=False
                         ) as del_resp:
-                            if del_resp.status not in (204, 404):
+                            if del_resp.status == 204:
+                                db.execute("DELETE FROM relayed_messages WHERE original_message_id = ? AND relayed_message_id = ?", (meta.get("original_msg_id"), str(relayed_id)))
+                                db.commit()
+                            else:
                                 log.warn(
                                     "QUEUE-CANCEL",
                                     f"Delete returned {del_resp.status}",
@@ -246,6 +277,7 @@ class RelayQueue:
                 log.warn("QUEUE-RETRY", f"Attempt {attempt+1}/{self._max_retries}: {net_err}", exec_id)
                 item["attempt"] += 1
                 await asyncio.sleep(2 ** attempt)
+                item["requeued"] = True
                 await self._queue.put(item)
 
 

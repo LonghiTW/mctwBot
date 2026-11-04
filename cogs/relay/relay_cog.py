@@ -299,6 +299,10 @@ class RelayCog(commands.Cog):
             return
         await self.message_sync.sync_forward_delete(message_id, channel_id)
 
+    @commands.Cog.listener()
+    async def on_member_ban(self, guild: discord.Guild, user: discord.User):
+        await self.message_sync.check_banned_user(str(guild.id), str(user.id))
+
     # ------------------------------------------------------------------
     # on_message_edit — edit sync
     # ------------------------------------------------------------------

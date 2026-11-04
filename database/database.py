@@ -163,6 +163,15 @@ MIGRATIONS = [
         );
         """,
     },
+    {
+        "version": 5,
+        "description": "Track relay source author and guild",
+        "sql": """
+        ALTER TABLE relayed_messages ADD COLUMN original_author_id TEXT;
+        ALTER TABLE relayed_messages ADD COLUMN original_guild_id TEXT;
+        CREATE INDEX idx_relayed_source_author ON relayed_messages(original_guild_id, original_author_id);
+        """,
+    },
 ]
 
 _DATABASE_KEY_PATTERN = re.compile(r"^[0-9a-fA-F]{64}$")

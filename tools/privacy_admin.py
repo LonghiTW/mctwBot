@@ -24,6 +24,7 @@ _USER_TABLES = {
     "relay_opt_out": "user_id",
     "user_warnings": "user_id",
     "group_blacklist": "blocked_id",
+    "relayed_messages": "original_author_id",
 }
 
 
@@ -42,9 +43,8 @@ def lookup_user(db: DatabaseManager, user_id: str) -> dict:
 def delete_user(db: DatabaseManager, user_id: str) -> dict:
     """Delete every user-scoped row for ``user_id`` and return the counts.
 
-    Message and thread mappings store Discord snowflake ids, not user ids, so
-    they cannot be selected by user here; they are removed automatically by the
-    fixed 30-day retention policy.
+    Relay mappings with a recorded original author are removed. Older mappings
+    without an author and thread mappings cannot be selected by user.
     """
     deleted: dict[str, int] = {}
     for table, column in _USER_TABLES.items():

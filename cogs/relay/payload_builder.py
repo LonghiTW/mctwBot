@@ -99,6 +99,8 @@ class RelayPayloadBuilder:
         meta = {
             "original_msg_id": str(original.id),
             "original_channel_id": str(original.channel.id),
+            "original_author_id": str(original.author.id),
+            "original_guild_id": str(original.guild.id),
             "target_channel_id": target["channel_id"],
             "execution_id": exec_id,
             "replied_to_id": str(original.reference.message_id) if original.reference and not is_forward else None,

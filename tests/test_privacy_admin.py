@@ -1,5 +1,5 @@
 import os
-import tempfile
+import uuid
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -14,10 +14,10 @@ class PrivacyAdminTests(unittest.TestCase):
     def setUp(self):
         self._original_instance = DatabaseManager._instance
         DatabaseManager._instance = None
-        self._temp_dir = tempfile.TemporaryDirectory()
+        self._db_path = Path.cwd() / f".privacy-test-{uuid.uuid4().hex}.db"
         self._env = patch.dict(os.environ, {"DATABASE_ENCRYPTION_KEY": _KEY})
         self._env.start()
-        self.db = DatabaseManager(str(Path(self._temp_dir.name) / "privacy.db"))
+        self.db = DatabaseManager(str(self._db_path))
         self.db.execute(
             "INSERT INTO relay_groups (group_id, group_name, owner_guild_id) VALUES (1, 'g', '10')"
         )
@@ -39,13 +39,17 @@ class PrivacyAdminTests(unittest.TestCase):
             " relayed_message_id, relayed_channel_id, replied_to_id)"
             " VALUES ('111', '10', '222', '20', NULL)"
         )
+        self.db.execute(
+            "INSERT INTO relayed_messages (original_message_id, original_channel_id, relayed_message_id, relayed_channel_id, original_author_id)"
+            " VALUES ('112', '10', '223', '20', '42'), ('113', '10', '224', '20', '99')"
+        )
         self.db.commit()
 
     def tearDown(self):
         self.db.close()
         self._env.stop()
         DatabaseManager._instance = self._original_instance
-        self._temp_dir.cleanup()
+        self._db_path.unlink(missing_ok=True)
 
     def test_lookup_returns_user_scoped_rows(self):
         result = lookup_user(self.db, "42")
@@ -53,6 +57,7 @@ class PrivacyAdminTests(unittest.TestCase):
         self.assertEqual(result["relay_opt_out"][0]["user_id"], "42")
         self.assertEqual(result["user_warnings"][0]["warning_count"], 2)
         self.assertEqual(result["group_blacklist"][0]["blocked_id"], "42")
+        self.assertEqual([r["original_message_id"] for r in result["relayed_messages"]], ["112"])
 
     def test_delete_user_removes_only_that_user(self):
         self.db.execute(
@@ -66,6 +71,10 @@ class PrivacyAdminTests(unittest.TestCase):
         self.assertEqual(deleted["relay_opt_out"], 1)
         self.assertEqual(deleted["user_warnings"], 1)
         self.assertEqual(deleted["group_blacklist"], 1)
+        self.assertEqual(deleted["relayed_messages"], 1)
+        self.assertIsNone(self.db.fetchone("SELECT 1 FROM relayed_messages WHERE original_message_id = '112'"))
+        self.assertIsNotNone(self.db.fetchone("SELECT 1 FROM relayed_messages WHERE original_message_id = '113'"))
+        self.assertIsNotNone(self.db.fetchone("SELECT 1 FROM relayed_messages WHERE original_message_id = '111'"))
         self.assertIsNone(self.db.fetchone("SELECT 1 FROM relay_opt_out WHERE user_id = '42'"))
         self.assertIsNotNone(self.db.fetchone("SELECT 1 FROM user_warnings WHERE user_id = '99'"))
 
