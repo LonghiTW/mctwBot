@@ -64,7 +64,7 @@ $env:DATABASE_ENCRYPTION_KEY = "<從祕密管理器載入>"
 4. **Bot**
    - **Privileged Gateway Intents**：
      - `Presence Intent`：**保持關閉**（本 Bot 不使用）。
-       - `Server Members Intent`：moderation profile 會用 Member 權限/角色讓 Showcase Guard 豁免管理訊息者與 `bypass_roles`；Welcome Cleaner 也用成員離開事件刪除對應歡迎訊息。未啟用 moderation 的 profile 關閉。
+       - `Server Members Intent`：**保持關閉**。Showcase Guard 使用伺服器訊息事件附帶的發訊者資料判斷豁免，不需此 Intent。
      - `Message Content Intent`：僅在需要 relay／前綴指令／Showcase 的 profile 開啟。
    - 關閉不需要的 Public Bot 選項視情況調整。
 5. 在 **App Directory / Verification** 或審核表單中，依 `PRIVACY_POLICY.md` 回覆各 intent 的用途。

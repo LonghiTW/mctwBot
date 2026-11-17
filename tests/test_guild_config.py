@@ -37,7 +37,7 @@ class GuildConfigTests(unittest.TestCase):
 
             self.assertTrue(manager.feature_enabled("123", "keywords"))
             self.assertFalse(manager.module_enabled("123", "keywords", "hello"))
-            self.assertFalse(manager.module_enabled("123", "moderation", "welcome_cleaner"))
+            self.assertFalse(manager.module_enabled("123", "scheduler", "friday_night"))
 
     def test_channels_for_requires_enabled_module(self):
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -55,8 +55,8 @@ class GuildConfigTests(unittest.TestCase):
         with self.assertRaises(GuildConfigError):
             validate_guild_config({
                 "guild_id": "123",
-                "features": {"moderation": True},
-                "moderation": {"welcome_cleaner": {"enabled": True, "channels": ["abc"]}},
+                "features": {"scheduler": True},
+                "scheduler": {"friday_night": {"enabled": True, "channels": ["abc"]}},
             })
 
 

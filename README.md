@@ -9,7 +9,7 @@
 | **Relay** | 跨伺服器訊息橋接 — 支援文字頻道、討論串、論壇貼文的雙向同步；並提供 relay 管理指令（`!reload`、`!announce`、`!relaylist`） | ✅ 單一 bot profile 可啟用 |
 | **Keywords** | 被動關鍵字回應 — 「你好/hello」「生日/birthday/hbd」 | ✅ 可關閉 |
 | **Scheduler** | 定時任務 — 週五日落 gif、週日 21:00 圖片 | ✅ 可關閉 |
-| **Moderation** | 頻道與成員管理，包含 Welcome Cleaner 與 Showcase Guard | ✅ 可關閉 |
+| **Moderation** | Showcase Guard 展示頻道管理 | ✅ 可關閉 |
 | **Commands** | 基本指令模組，目前包含 `!ping` | ✅ 可關閉 |
 | **Admin** | 管理員功能，目前包含 JSON 訊息控制（`!msg` 系列） | ✅ 可關閉 |
 
@@ -66,7 +66,7 @@ $env:DATABASE_PATH = "data/database.encrypted.db"
 
 ### `config.json` — 全域功能設定
 
-`config.json` 控制 bot profile、全域管理員、通知、跨服 relay，以及 Showcase Guard 的全域設定。Keywords、Scheduler 與 Welcome Cleaner 等單一伺服器功能的細項設定，則由 `config.guilds/{guild_id}.json` 控制。
+`config.json` 控制 bot profile、全域管理員、通知、跨服 relay，以及 Showcase Guard 的全域設定。Keywords 與 Scheduler 的單服細項設定則由 `config.guilds/{guild_id}.json` 控制。
 
 #### `bot_admins` — Bot 管理員與功能節點
 
@@ -133,7 +133,7 @@ $env:DATABASE_PATH = "data/database.encrypted.db"
 
 `relay` 同一時間只能在一個 profile 啟用，避免多個 bot 同時處理同一批中繼事件。
 
-`features` 使用大分類控制 Cog 載入，所有功能預設都是 `false`，需要的模組必須在各 profile 中明確啟用。`relay`、`commands`、`admin` 是全域功能；`keywords`、`scheduler`、`moderation` 啟用後，仍會再依每個伺服器的 `config.guilds/{guild_id}.json` 決定是否執行。
+`features` 使用大分類控制 Cog 載入，所有功能預設都是 `false`，需要的模組必須在各 profile 中明確啟用。`relay`、`commands`、`admin` 是全域功能；`moderation` 依全域 Showcase Guard 設定執行；`keywords`、`scheduler` 則依單服設定決定是否執行。
 
 > `commands` 目前載入 `ping` 與 `/privacy`。`admin` 提供與 relay 無關的 JSON 訊息控制（`!msg` 系列）；relay 管理指令（`!reload`、`!announce`、`!relaylist`）會隨 `relay` feature 一起載入，因此只有在啟用 relay 的 profile 上可用。
 
@@ -296,8 +296,7 @@ config.guilds/
 ```json
 "features": {
   "keywords": true,
-  "scheduler": false,
-  "moderation": false
+  "scheduler": false
 }
 ```
 
@@ -312,19 +311,6 @@ Keywords 類功能的細項設定（需在 profile 與此伺服器都開啟 `key
   },
   "birthday": {
     "enabled": true
-  }
-}
-```
-
-#### `moderation`
-
-Moderation 類功能的細項設定（需在 profile 與此伺服器都開啟 `moderation`）：
-
-```json
-"moderation": {
-  "welcome_cleaner": {
-    "enabled": true,
-    "channels": ["1015827632731996251"]
   }
 }
 ```
@@ -430,7 +416,7 @@ Scheduler 類功能的細項設定（需在 profile 與此伺服器都開啟 `sc
 |------|--------------|
 | Keywords | 檢視頻道、發送訊息 |
 | Scheduler | 檢視頻道、發送訊息（圖片）、附加檔案 |
-| Moderation（Welcome Cleaner） | 管理訊息（成員離開時刪除歡迎訊息） |
+| Moderation（Showcase Guard） | 管理訊息、檢視頻道、發送訊息 |
 | Commands（`!ping`） | 檢視頻道、發送訊息 |
 
 ## 專案結構
@@ -476,7 +462,7 @@ Bot/
 - 圖片附件會以圖片預覽 embed 同步；非圖片附件仍以連結同步
 - Relay webhook 的訊息會顯示原始使用者的名稱與頭貼；webhook 個人頁面的頭貼則使用 Bot 頭貼（建立及 `!reload` 同步時套用），這是刻意的中性身分，不會逐訊息改變
 - 啟動時會先驗證 `config.json`，並在 bot ready 後補齊 `config.guilds/{guild_id}.json`
-- `config.json` 放全域設定與 Showcase Guard；`keywords`、`scheduler`、`moderation.welcome_cleaner` 細項請放在單服設定檔
+- `config.json` 放全域設定與 Showcase Guard；`keywords`、`scheduler` 細項請放在單服設定檔
 - 修改設定後可用 `!reload` 重新載入 `config.json`、同步 relay，並清除/重讀單服設定快取
 - `/relay` slash 指令同樣直接改 `config.json`（自動備份 + 原子寫入 + 同步），修改後不需要再手動 `!reload`
 - Slash 指令預設全域同步；開發期可在 `config.json` 的 `slash_commands.guild_ids` 指定測試伺服器，讓指令更新即時生效

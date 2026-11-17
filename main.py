@@ -43,15 +43,22 @@ CONFIGURED_FEATURE_EXTENSIONS = {
         "sunday_night": "cogs.scheduler.sunday_night",
     },
     "moderation": {
-        "welcome_cleaner": "cogs.moderation.welcome_cleaner",
         "showcase": "cogs.moderation.showcase_guard",
     },
 }
 
 
 def create_intents(profile: BotProfile, config: dict | None = None) -> discord.Intents:
-    intents = discord.Intents.default()
     features = profile.features
+    relay_enabled = features.get("relay", False)
+    intents = discord.Intents(
+        guilds=True,
+        guild_messages=True,
+        dm_messages=True,
+        moderation=relay_enabled,
+        emojis_and_stickers=relay_enabled,
+        guild_reactions=relay_enabled,
+    )
     moderation = (config or {}).get("moderation", {})
     showcase = moderation.get("showcase", {}) if isinstance(moderation, dict) else {}
     moderation_reads_content = bool(showcase.get("enabled", False)) if isinstance(showcase, dict) else False
@@ -59,13 +66,6 @@ def create_intents(profile: BotProfile, config: dict | None = None) -> discord.I
         features.get(feature, False)
         for feature in ("relay", "keywords", "commands", "admin")
     ) or (features.get("moderation", False) and moderation_reads_content)
-    intents.guild_messages = True
-    intents.guilds = True
-    intents.members = bool(features.get("moderation", False))
-    intents.webhooks = True
-    intents.guild_reactions = True
-    if hasattr(intents, "threads"):
-        intents.threads = True
     return intents
 
 

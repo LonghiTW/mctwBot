@@ -16,14 +16,10 @@ DEFAULT_GUILD_CONFIG = {
     "features": {
         "keywords": False,
         "scheduler": False,
-        "moderation": False,
     },
     "keywords": {
         "hello": {"enabled": True},
         "birthday": {"enabled": True},
-    },
-    "moderation": {
-        "welcome_cleaner": {"enabled": True, "channels": []},
     },
     "scheduler": {
         "friday_night": {"enabled": True, "channels": []},
@@ -159,7 +155,7 @@ def validate_guild_config(config: object, path: Path | str = "guild config") -> 
             if not isinstance(enabled, bool):
                 errors.append(f"features.{name} must be true or false.")
 
-    for feature in ("keywords", "scheduler", "moderation"):
+    for feature in ("keywords", "scheduler"):
         feature_config = config.get(feature, {})
         if feature_config in (None, {}):
             continue

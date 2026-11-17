@@ -2,8 +2,7 @@
   "guild_id": "123456789012345678",
   "features": {
     "keywords": true,
-    "scheduler": false,
-    "moderation": false
+    "scheduler": false
   },
   "keywords": {
     "hello": {
@@ -11,12 +10,6 @@
     },
     "birthday": {
       "enabled": true
-    }
-  },
-  "moderation": {
-    "welcome_cleaner": {
-      "enabled": true,
-      "channels": []
     }
   },
   "scheduler": {
